@@ -1,4 +1,14 @@
 .idea/
-.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
 out/
 *.class
+.deps/
+.env
+.env.*
+!.env.example
+.secrets/
+target/
+.debug-classes/

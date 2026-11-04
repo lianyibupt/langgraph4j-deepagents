@@ -1,8 +1,12 @@
-# 第一课：亲手观察 Java Agent Loop
+# Java 个人 Agent 学习项目
+
+当前已实现第一课的离线循环，以及第二课的 DeepSeek 适配、协议回放和 Trae 调试配置。第二课请先阅读 [在 Trae 中逐步调试](STAGE2.md)。真实 DeepSeek 调用需要你在本机 `.env` 填写 API Key；离线验证结果不代表真实账户已连通。
+
+下文保留第一课的学习步骤。
 
 本目录是独立的 Java 21 学习项目，目标逐步演进为源码研究助手（A）和 Markdown 知识助手（B）。第一课聚焦模型、工具与运行时怎样形成闭环。
 
-**当前只使用 `ScriptedModelClient`：它按固定规则发出一次读取请求，再引用读取结果。它不是大模型，不会理解任意问题，没有调用外部 API。** 后续真实模型将实现同一个 `ModelClient` 接口。
+**第一课默认使用 `ScriptedModelClient`：它按固定规则发出一次读取请求，再引用读取结果。** 第二课的 `DeepSeekModelClient` 实现同一个 `ModelClient` 接口，使用 `--provider deepseek` 选择真实调用。
 
 ## 运行
 
@@ -20,7 +24,7 @@ bash personal-agent/test.sh
 bash /Users/bytedance/Documents/git_repo/langgraph4j-deepagents/personal-agent/run.sh --messages
 ```
 
-依赖只有 JDK 21。脚本使用 macOS 的 `/usr/bin/java` 与 `/usr/bin/javac`，带调试信息编译到临时目录，结束时清理编译输出。无需 Maven、Spring Boot 或 API Key。
+使用 JDK 21；第二课新增 Jackson 解析 JSON，脚本复用本机已有缓存，将依赖准备到忽略的 `.deps/`。脚本使用 macOS 的 `/usr/bin/java` 与 `/usr/bin/javac`，带调试信息编译到临时目录，结束时清理编译输出。运行离线示例无需全局安装 Maven、Spring Boot 或配置 API Key。
 
 正常演示的关键事件顺序是：
 
@@ -61,7 +65,7 @@ model=scripted
 
 四个最有价值的断点已在 `AgentRuntime` 中用 `Breakpoint 1` 至 `Breakpoint 4` 注释标记。读到这里可以回答：谁提出动作、谁执行动作、结果存在哪里、谁控制停止。
 
-本课工具参数用 `Map<String, String>` 表达，工具定义是简单参数描述，不是完整 JSON Schema。阶段 2 再处理供应商协议与工具 Schema 的适配。
+本课工具参数用 `Map<String, String>` 表达；第二课在 `DeepSeekCodec` 中把简单工具描述转换成 JSON Schema，并处理供应商协议。
 
 ## 调试
 
@@ -129,7 +133,7 @@ bash personal-agent/run.sh --max-turns 1 --messages
 
 ## 后续学习顺序
 
-1. **第二课：真实模型。** 实现模型适配器和工具 Schema，复用现有运行时，观察真实模型如何选择工具。
+1. **第二课：真实模型。** DeepSeek 适配器和工具 Schema 已实现；参照 STAGE2.md 配置 Key 并在 Trae 调试。
 2. **第三课：源码研究 A。** 增加目录发现、内容检索、按行读取与源码引用，从本地 Java 仓库生成研究报告。
 3. **第四课：Markdown 知识整理 B。** 增加文档检索和带来源的笔记产物，输入资料默认只读，输出独立保存。
 4. **第五课：长任务。** 加入计划、上下文预算、输出外置和摘要，学习怎样维持任务方向。

@@ -7,8 +7,8 @@
 - 保留 scripted 演示，新增 deepseek 真实模式和 replay 离线协议回放。
 - 三种模式复用 AgentRuntime、工具和消息状态。
 - DeepSeek 通过 JDK HttpClient 调用官方 Chat Completions；Jackson 解析 JSON。先固定使用非流式、非思考模式。
-- 默认模型 deepseek-flash，模型名可配置；默认输出上限 1024 tokens，请求总超时 60 秒，默认最多 4 轮；不自动重试付费请求。
-- API Key 仅从环境读取，或由专用 Bash 启动脚本在本机无回显输入；不写入项目、日志、命令行参数或文档。
+- 用户指定 Trae，已核实本机 Trae CN 和 Java Debugger 扩展。默认模型 deepseek-flash，模型名可配置；默认输出上限 1024 tokens，请求总超时 60 秒，默认最多 4 轮；不自动重试付费请求。
+- 按用户后续明确要求，API Key 从项目 .env 读取，进程环境变量优先；.env 已忽略，仅提交空Key的 .env.example。Java按数据解析，不 source，不回显配置值。
 - 仍只读取自带 examples，第三阶段再开放源码检索。
 
 ## 官方依据（2026-11-04 读取）
@@ -38,14 +38,14 @@
 
 ## 调试交付
 
-- 独立 STAGE2.md：IDEA 导入 pom、普通 Debug 与远程 Attach 两种启动方式、Step Over / Into / Out / Resume、异常断点和变量观察表。
+- 独立 STAGE2.md：Trae 打开 personal-agent 目录、普通 Debug 与远程 Attach 两种启动方式、Step Over / Into / Out / Resume、异常断点和变量观察表。
 - 依次观察 Main 组装 → runtime messages → codec requestTree/requestJson → transport request/response → codec responseTree/argumentsNode → runtime batch/result/messages → finalAnswer。
 - replay 先练习确定性的完整断点路径；deepseek 使用同一适配器与 codec，替换传输为真实 HTTP。
 - 验证用 jdb 实际停在 runtime、adapter、codec 与文件工具，读取关键变量并继续结束。
 
 ## 验证与当前凭证边界
 
-当前执行环境 DEEPSEEK_API_KEY 未设置。不搜索其他应用的凭证配置。
+创建了空 Key 的项目 .env 模板。没有搜索其他应用的凭证配置，也没有执行真实付费调用。
 
 必须完成：阶段 1 回归、JSON 请求与响应契约、工具参数校验、错误和日志脱敏、replay 真文件读取闭环、HTTP 层本地服务器测试（认证格式/重定向/错误/超时）、IDE 可导入配置及实际远程调试。
 

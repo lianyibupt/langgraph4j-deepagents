@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Executable behavior tests: assertions always run, without -ea or dependencies. */
+/** Executable behavior tests: assertions always run, without -ea or a test framework. */
 public final class AgentRuntimeTest {
     @FunctionalInterface interface TestCase { void run() throws Exception; }
     private static int passed;

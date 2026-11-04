@@ -65,7 +65,7 @@ public final class AgentRuntime {
             }
             seenCallIds.addAll(batchIds);
             trace.accept("model.response type=tool_calls count=" + batch.calls().size());
-            messages.add(Message.calls(batch.calls()));
+            messages.add(Message.calls(batch.calls(), batch.text()));
             for (ToolCall call : batch.calls()) {
                 trace.accept("tool.start id=" + call.id() + " name=" + call.name());
                 // Breakpoint 3: only the runtime, through the registry, executes tools.

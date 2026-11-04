@@ -2,7 +2,7 @@ package personal.agent;
 
 import java.util.List;
 
-/** Stage 1 supports either a final answer or a batch of tool calls. */
+/** A final answer or tool-call batch, retaining any accompanying assistant text. */
 public sealed interface ModelReply {
     record FinalAnswer(String text) implements ModelReply {
         public FinalAnswer {
@@ -12,9 +12,12 @@ public sealed interface ModelReply {
         }
     }
 
-    record Tools(List<ToolCall> calls) implements ModelReply {
+    record Tools(List<ToolCall> calls, String text) implements ModelReply {
+        public Tools(List<ToolCall> calls) { this(calls, ""); }
+
         public Tools {
             calls = List.copyOf(calls);
+            if (text == null) text = "";
             if (calls.isEmpty()) {
                 throw new IllegalArgumentException("Tool call batch must not be empty");
             }

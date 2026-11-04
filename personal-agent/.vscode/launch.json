@@ -1,0 +1,83 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Stage 2 · Replay · Step by step",
+      "mainClass": "personal.agent.Main",
+      "cwd": "${workspaceFolder}",
+      "classPaths": [
+        "${workspaceFolder}/.debug-classes",
+        "${workspaceFolder}/.deps/jackson-databind-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-core-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-annotations-2.18.2.jar"
+      ],
+      "sourcePaths": [
+        "${workspaceFolder}/src/main/java"
+      ],
+      "args": [
+        "--provider",
+        "replay",
+        "--messages",
+        "--wire"
+      ],
+      "console": "integratedTerminal",
+      "stopOnEntry": true,
+      "preLaunchTask": "Build Java agent with debug info",
+      "stepFilters": {
+        "skipClasses": [
+          "$JDK",
+          "com.fasterxml.jackson.*"
+        ]
+      }
+    },
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Stage 2 · DeepSeek · .env",
+      "mainClass": "personal.agent.Main",
+      "cwd": "${workspaceFolder}",
+      "classPaths": [
+        "${workspaceFolder}/.debug-classes",
+        "${workspaceFolder}/.deps/jackson-databind-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-core-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-annotations-2.18.2.jar"
+      ],
+      "sourcePaths": [
+        "${workspaceFolder}/src/main/java"
+      ],
+      "args": [
+        "--provider",
+        "deepseek",
+        "--messages"
+      ],
+      "console": "internalConsole",
+      "stopOnEntry": true,
+      "preLaunchTask": "Build Java agent with debug info",
+      "stepFilters": {
+        "skipClasses": [
+          "$JDK",
+          "com.fasterxml.jackson.*"
+        ]
+      }
+    },
+    {
+      "type": "java",
+      "request": "attach",
+      "name": "Stage 2 · Attach localhost:5005",
+      "hostName": "127.0.0.1",
+      "port": 5005,
+      "timeout": 30000,
+      "sourcePaths": [
+        "${workspaceFolder}/src/main/java"
+      ],
+      "stepFilters": {
+        "skipClasses": [
+          "$JDK",
+          "com.fasterxml.jackson.*"
+        ]
+      }
+    }
+  ]
+}

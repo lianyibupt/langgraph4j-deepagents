@@ -33,7 +33,11 @@ public record Message(Role role, String text, List<ToolCall> toolCalls,
     }
 
     public static Message calls(List<ToolCall> calls) {
-        return new Message(Role.ASSISTANT, "", calls, null, false);
+        return calls(calls, "");
+    }
+
+    public static Message calls(List<ToolCall> calls, String text) {
+        return new Message(Role.ASSISTANT, text, calls, null, false);
     }
 
     public static Message tool(ToolCall call, ToolResult result) {
