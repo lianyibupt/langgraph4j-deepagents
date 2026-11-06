@@ -64,6 +64,160 @@
     },
     {
       "type": "java",
+      "request": "launch",
+      "name": "Stage 3 · Source research · Replay",
+      "mainClass": "personal.agent.Main",
+      "cwd": "${workspaceFolder}",
+      "classPaths": [
+        "${workspaceFolder}/.debug-classes",
+        "${workspaceFolder}/.deps/jackson-databind-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-core-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-annotations-2.18.2.jar"
+      ],
+      "sourcePaths": [
+        "${workspaceFolder}/src/main/java"
+      ],
+      "args": [
+        "--repo",
+        "${workspaceFolder}",
+        "--messages"
+      ],
+      "console": "integratedTerminal",
+      "stopOnEntry": true,
+      "preLaunchTask": "Build Java agent with debug info",
+      "stepFilters": {
+        "skipClasses": [
+          "$JDK",
+          "com.fasterxml.jackson.*"
+        ]
+      }
+    },
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Stage 4 · Markdown knowledge · Replay",
+      "mainClass": "personal.agent.Main",
+      "cwd": "${workspaceFolder}",
+      "classPaths": [
+        "${workspaceFolder}/.debug-classes",
+        "${workspaceFolder}/.deps/jackson-databind-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-core-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-annotations-2.18.2.jar"
+      ],
+      "sourcePaths": [
+        "${workspaceFolder}/src/main/java"
+      ],
+      "args": [
+        "--notes",
+        "${workspaceFolder}/examples/knowledge",
+        "--output",
+        "${input:knowledgeNoteOutput}",
+        "--messages"
+      ],
+      "console": "integratedTerminal",
+      "stopOnEntry": true,
+      "preLaunchTask": "Build Java agent with debug info",
+      "stepFilters": {
+        "skipClasses": [
+          "$JDK",
+          "com.fasterxml.jackson.*"
+        ]
+      }
+    },
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Stage 5 · Long task · Replay",
+      "mainClass": "personal.agent.Main",
+      "cwd": "${workspaceFolder}",
+      "classPaths": [
+        "${workspaceFolder}/.debug-classes",
+        "${workspaceFolder}/.deps/jackson-databind-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-core-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-annotations-2.18.2.jar"
+      ],
+      "sourcePaths": [
+        "${workspaceFolder}/src/main/java"
+      ],
+      "args": [
+        "--context-chars",
+        "1800",
+        "--messages"
+      ],
+      "console": "integratedTerminal",
+      "stopOnEntry": true,
+      "preLaunchTask": "Build Java agent with debug info",
+      "stepFilters": {
+        "skipClasses": [
+          "$JDK",
+          "com.fasterxml.jackson.*"
+        ]
+      }
+    },
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Stage 6 · Delegate and pause",
+      "mainClass": "personal.agent.Main",
+      "cwd": "${workspaceFolder}",
+      "classPaths": [
+        "${workspaceFolder}/.debug-classes",
+        "${workspaceFolder}/.deps/jackson-databind-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-core-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-annotations-2.18.2.jar"
+      ],
+      "sourcePaths": [
+        "${workspaceFolder}/src/main/java"
+      ],
+      "args": [
+        "--checkpoint",
+        "${input:delegationCheckpoint}",
+        "--pause-after",
+        "1",
+        "--messages"
+      ],
+      "console": "integratedTerminal",
+      "stopOnEntry": true,
+      "preLaunchTask": "Build Java agent with debug info",
+      "stepFilters": {
+        "skipClasses": [
+          "$JDK",
+          "com.fasterxml.jackson.*"
+        ]
+      }
+    },
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Stage 6 · Resume checkpoint",
+      "mainClass": "personal.agent.Main",
+      "cwd": "${workspaceFolder}",
+      "classPaths": [
+        "${workspaceFolder}/.debug-classes",
+        "${workspaceFolder}/.deps/jackson-databind-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-core-2.18.2.jar",
+        "${workspaceFolder}/.deps/jackson-annotations-2.18.2.jar"
+      ],
+      "sourcePaths": [
+        "${workspaceFolder}/src/main/java"
+      ],
+      "args": [
+        "--resume",
+        "${input:delegationCheckpoint}",
+        "--messages"
+      ],
+      "console": "integratedTerminal",
+      "stopOnEntry": true,
+      "preLaunchTask": "Build Java agent with debug info",
+      "stepFilters": {
+        "skipClasses": [
+          "$JDK",
+          "com.fasterxml.jackson.*"
+        ]
+      }
+    },
+    {
+      "type": "java",
       "request": "attach",
       "name": "Stage 2 · Attach localhost:5005",
       "hostName": "127.0.0.1",
@@ -78,6 +232,20 @@
           "com.fasterxml.jackson.*"
         ]
       }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "knowledgeNoteOutput",
+      "type": "promptString",
+      "description": "填写一个尚不存在的 Markdown 输出路径",
+      "default": "out/knowledge-note.md"
+    },
+    {
+      "id": "delegationCheckpoint",
+      "type": "promptString",
+      "description": "检查点文件路径，首次启动请使用新路径",
+      "default": "out/delegation-demo.json"
     }
   ]
 }

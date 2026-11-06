@@ -5,7 +5,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 public record AgentResult(Status status, int modelTurns, List<Message> messages, String detail) {
-    public enum Status { COMPLETED, TURN_LIMIT, FAILED }
+    public enum Status { COMPLETED, PAUSED, TURN_LIMIT, FAILED }
 
     public AgentResult {
         Objects.requireNonNull(status);

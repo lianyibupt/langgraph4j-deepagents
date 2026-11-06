@@ -1,5 +1,9 @@
 package personal.agent;
 
+import personal.agent.longtask.LongTaskContext;
+import personal.agent.delegation.CheckpointStore;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -11,32 +15,76 @@ public final class AgentRuntime {
     private final ToolRegistry tools;
     private final int maxModelTurns;
     private final Consumer<String> trace;
+    private final LongTaskContext context;
 
     public AgentRuntime(ModelClient model, ToolRegistry tools, int maxModelTurns, Consumer<String> trace) {
+        this(model, tools, maxModelTurns, trace, null);
+    }
+
+    public AgentRuntime(ModelClient model, ToolRegistry tools, int maxModelTurns, Consumer<String> trace,
+                        LongTaskContext context) {
         this.model = Objects.requireNonNull(model);
         this.tools = Objects.requireNonNull(tools);
         if (maxModelTurns < 1) throw new IllegalArgumentException("maxModelTurns must be positive");
         this.maxModelTurns = maxModelTurns;
         this.trace = Objects.requireNonNull(trace);
+        this.context = context;
     }
 
     public AgentResult run(String question) {
         if (question == null || question.isBlank()) {
             throw new IllegalArgumentException("Question must not be blank");
         }
-        var messages = new ArrayList<Message>();
-        var seenCallIds = new HashSet<String>();
-        messages.add(Message.user(question));
+        var initial = List.of(Message.user(question));
+        if (context == null) return runLoop(initial, 0, null, 0);
+        synchronized (context) {
+            context.reset();
+            return runLoop(initial, 0, null, 0);
+        }
+    }
 
-        for (int turn = 1; turn <= maxModelTurns; turn++) {
+    public AgentResult runCheckpointed(String question, CheckpointStore store, boolean resume, int pauseAfter)
+            throws IOException {
+        if (context != null) throw new IllegalArgumentException("CHECKPOINT_CONTEXT_UNSUPPORTED");
+        if (!resume) {
+            if (question == null || question.isBlank()) throw new IllegalArgumentException("Question must not be blank");
+            store.start(question);
+        }
+        var state = store.load();
+        trace.accept("parent-checkpoint " + (resume ? "loaded" : "created") + " phase=" + state.phase()
+                + " modelTurns=" + state.modelTurns() + " path=" + store.path());
+        if (state.phase() == CheckpointStore.Phase.COMPLETED) {
+            return stop(AgentResult.Status.COMPLETED, state.modelTurns(), state.messages(), "Completed checkpoint loaded");
+        }
+        try {
+            return runLoop(state.messages(), state.modelTurns(), store, pauseAfter);
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
+        }
+    }
+
+    private AgentResult runLoop(List<Message> initial, int completedTurns, CheckpointStore store, int pauseAfter) {
+        var messages = new ArrayList<>(initial);
+        var seenCallIds = new HashSet<String>();
+        for (Message message : initial) for (ToolCall call : message.toolCalls()) seenCallIds.add(call.id());
+
+        for (int turn = completedTurns + 1; turn <= maxModelTurns; turn++) {
             if (Thread.currentThread().isInterrupted()) {
                 return stop(AgentResult.Status.FAILED, turn - 1, messages, "INTERRUPTED");
             }
-            trace.accept("model.request turn=" + turn + " messages=" + messages.size());
+            final List<Message> modelMessages;
+            try {
+                modelMessages = context == null ? List.copyOf(messages) : context.prepare(messages);
+            } catch (IllegalArgumentException e) {
+                return stop(AgentResult.Status.FAILED, turn - 1, messages, e.getMessage());
+            } catch (IOException e) {
+                return stop(AgentResult.Status.FAILED, turn - 1, messages, "CONTEXT_ARTIFACT_FAILED: " + e.getMessage());
+            }
+            trace.accept("model.request turn=" + turn + " messages=" + modelMessages.size());
             final ModelReply reply;
             try {
                 // Breakpoint 1: inspect exactly what this model request receives.
-                reply = model.reply(List.copyOf(messages), tools.definitions());
+                reply = model.reply(modelMessages, tools.definitions());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return stop(AgentResult.Status.FAILED, turn, messages, "INTERRUPTED");
@@ -49,6 +97,7 @@ public final class AgentRuntime {
             if (reply instanceof ModelReply.FinalAnswer answer) {
                 trace.accept("model.response type=final_answer");
                 messages.add(Message.answer(answer.text()));
+                save(store, CheckpointStore.Phase.COMPLETED, turn, messages);
                 return stop(AgentResult.Status.COMPLETED, turn, messages, "Final response received");
             }
             if (!(reply instanceof ModelReply.Tools batch)) {
@@ -66,6 +115,7 @@ public final class AgentRuntime {
             seenCallIds.addAll(batchIds);
             trace.accept("model.response type=tool_calls count=" + batch.calls().size());
             messages.add(Message.calls(batch.calls(), batch.text()));
+            save(store, CheckpointStore.Phase.TOOLS_PENDING, turn, messages);
             for (ToolCall call : batch.calls()) {
                 trace.accept("tool.start id=" + call.id() + " name=" + call.name());
                 // Breakpoint 3: only the runtime, through the registry, executes tools.
@@ -74,10 +124,34 @@ public final class AgentRuntime {
                 // Breakpoint 4: the result is now in the next model input.
                 trace.accept("tool.result id=" + call.id() + " error=" + result.error()
                         + " chars=" + result.text().length());
+                if (store != null && Thread.currentThread().isInterrupted()) {
+                    return stop(AgentResult.Status.FAILED, turn, messages, "CHECKPOINT_TOOLS_UNCERTAIN: interrupted during tools");
+                }
+                if (context != null) {
+                    try {
+                        context.record(call, result);
+                    } catch (IOException e) {
+                        return stop(AgentResult.Status.FAILED, turn, messages, "CONTEXT_ARTIFACT_FAILED: " + e.getMessage());
+                    }
+                }
+            }
+            save(store, CheckpointStore.Phase.READY, turn, messages);
+            if (store != null && pauseAfter > 0 && turn >= pauseAfter) {
+                return stop(AgentResult.Status.PAUSED, turn, messages, "Paused after a complete tool batch. Resume with --resume " + store.path());
             }
         }
-        return stop(AgentResult.Status.TURN_LIMIT, maxModelTurns, messages,
+        return stop(AgentResult.Status.TURN_LIMIT, Math.max(completedTurns, maxModelTurns), messages,
                 "Maximum model turns reached: " + maxModelTurns);
+    }
+
+    private void save(CheckpointStore store, CheckpointStore.Phase phase, int turn, List<Message> messages) {
+        if (store == null) return;
+        try {
+            store.save(phase, turn, messages);
+            trace.accept("parent-checkpoint saved phase=" + phase + " modelTurns=" + turn);
+        } catch (IOException e) {
+            throw new UncheckedIOException(new IOException("CHECKPOINT_WRITE_FAILED: " + e.getMessage(), e));
+        }
     }
 
     private AgentResult stop(AgentResult.Status status, int turns, List<Message> messages, String detail) {
