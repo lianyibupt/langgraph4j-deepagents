@@ -9,7 +9,7 @@ DEPS_CP="$(/bin/bash "$PROJECT_DIR/prepare-deps.sh")"
 SOURCES=()
 while IFS= read -r -d '' SOURCE; do
   SOURCES+=("$SOURCE")
-done < <(/usr/bin/find "$PROJECT_DIR/src/main/java" "$PROJECT_DIR/src/test/java" -name '*.java' -type f -print0)
+done < <(/usr/bin/find "$PROJECT_DIR/src/main/java" "$PROJECT_DIR/src/test/java" -path '*/personal/agent/web' -prune -o -name '*.java' -type f -print0)
 /usr/bin/javac -encoding UTF-8 --release 21 -g -Xlint:all -cp "$DEPS_CP" -d "$BUILD_DIR" "${SOURCES[@]}"
 TEST_OPTIONS=('-Dagent.test.http=false')
 if [[ "${1:-}" == '--http' && "$#" == 1 ]]; then

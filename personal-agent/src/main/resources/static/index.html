@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent 工作台</title>
+  <link rel="stylesheet" href="/console.css">
+  <script src="/console.js" defer></script>
+</head>
+<body>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="icon-mark" viewBox="0 0 24 24"><path d="M5 5h5v5H5zm9 9h5v5h-5zM7.5 10v4a2.5 2.5 0 0 0 2.5 2.5h4m2.5-10.5v5m-2.5-2.5h5"/></symbol>
+    <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.5"/><circle cx="15" cy="17" r="2.5"/></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 5 12 7-12 7z"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="icon-flow" viewBox="0 0 24 24"><path d="M4 12h4l3-6 4 12 3-6h2"/></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+    <symbol id="icon-terminal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></symbol>
+    <symbol id="icon-file" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h4m-8 4h5m-5 4h5"/></symbol>
+    <symbol id="icon-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#console" aria-label="Agent Runtime 工作台">
+        <span class="brand-mark"><svg class="icon"><use href="#icon-mark"></use></svg></span>
+        <span><strong>Agent Runtime</strong><small>Java 个人 Agent</small></span>
+      </a>
+      <nav class="navigation" aria-label="主导航">
+        <span class="nav-label">工作区</span>
+        <a class="nav-item" href="#console" data-page="console" aria-current="page"><svg class="icon"><use href="#icon-grid"></use></svg>运行控制台</a>
+        <a class="nav-item" href="#history" data-page="history"><svg class="icon"><use href="#icon-clock"></use></svg>运行历史</a>
+        <button class="nav-item" id="open-config" type="button"><svg class="icon"><use href="#icon-settings"></use></svg>模型配置</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="environment"><span class="environment-icon"><svg class="icon"><use href="#icon-terminal"></use></svg></span><div><strong>本地工作区</strong><small>个人 Agent · Java 21</small></div></div>
+      </div>
+    </aside>
+
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="breadcrumb">工作区 <svg class="icon"><use href="#icon-chevron"></use></svg> <strong id="breadcrumb">运行控制台</strong></div>
+        <span class="connection" id="connection" role="status"><span class="dot"></span><span id="connection-label">正在连接本地服务</span></span>
+      </header>
+
+      <main class="content">
+        <header class="page-heading" id="console-heading">
+          <h1>Agent 工作台</h1>
+          <p>运行 Java Agent 任务，查看从模型请求、工具执行到最终回答的全过程。</p>
+        </header>
+        <header class="page-heading" id="history-heading" hidden>
+          <h1>运行历史</h1>
+          <p id="history-description">查看本次服务启动以来的运行记录、结果与执行轨迹。</p>
+        </header>
+
+        <div class="notice" id="notice" role="alert" hidden></div>
+
+        <div class="stats" id="stats" aria-label="运行统计">
+          <div class="stat"><span class="stat-icon tone-orange"><svg class="icon"><use href="#icon-flow"></use></svg></span><div><span>当前运行记录</span><strong id="stat-total">—</strong></div></div>
+          <div class="stat"><span class="stat-icon tone-green"><svg class="icon"><use href="#icon-check"></use></svg></span><div><span>已完成</span><strong id="stat-complete">—</strong></div></div>
+          <div class="stat"><span class="stat-icon tone-blue"><svg class="icon"><use href="#icon-clock"></use></svg></span><div><span>最近运行耗时</span><strong id="stat-duration">—</strong></div></div>
+        </div>
+
+        <div class="workbench" id="workbench">
+          <section class="panel compose" aria-labelledby="compose-heading">
+            <header class="panel-header"><div><h2 id="compose-heading">新建运行</h2><p>选择场景和模型，再输入要完成的任务。</p></div></header>
+            <form class="run-form" id="run-form">
+              <label for="preset">任务场景</label>
+              <select id="preset" name="preset" disabled><option>正在加载场景</option></select>
+              <p class="field-help" id="preset-description"></p>
+              <label for="provider">模型模式</label>
+              <select id="provider" name="provider" disabled>
+                <option value="replay">协议回放</option><option value="scripted">固定响应</option><option value="deepseek">DeepSeek 实时调用</option>
+              </select>
+              <p class="field-help" id="provider-description">回放模型协议并真实执行工具，无需联网。</p>
+              <div class="label-row"><label for="question">任务内容</label><button class="text-button quiet" type="button" id="reset-question" disabled>恢复示例</button></div>
+              <textarea id="question" name="question" rows="4" maxlength="4000" required placeholder="写下你希望 Agent 完成的任务" disabled></textarea>
+              <div class="scope"><svg class="icon"><use href="#icon-file"></use></svg><span>读取范围</span><code id="scope-path">—</code></div>
+              <details class="advanced">
+                <summary>高级参数</summary>
+                <div class="advanced-fields">
+                  <label for="max-turns">模型轮次上限</label><input id="max-turns" type="number" name="maxTurns" min="1" max="20" required disabled>
+                  <label class="checkbox" id="pause-option" hidden><input id="pause" type="checkbox">委派完成后暂停</label>
+                </div>
+              </details>
+              <button class="button primary run-button" type="submit" id="start" disabled><svg class="icon"><use href="#icon-play"></use></svg><span id="start-label">运行任务</span><svg class="icon end-icon"><use href="#icon-arrow"></use></svg></button>
+            </form>
+          </section>
+
+          <section class="panel viewer" id="viewer" aria-labelledby="viewer-heading">
+            <header class="panel-header viewer-header">
+              <div><h2 id="viewer-heading">执行详情</h2><p id="viewer-subtitle">选择一条运行记录，或提交一个新任务。</p></div>
+              <div class="viewer-actions"><span class="status" id="run-status" aria-live="polite"><span class="dot"></span>待运行</span><button class="button small" type="button" id="resume" hidden>继续运行</button></div>
+            </header>
+            <div class="run-metrics" id="run-metrics" hidden><span>模型轮次 <b id="detail-turns">0</b></span><span>工具调用 <b id="detail-tools">0</b></span><span>运行 ID <code id="detail-id"></code></span></div>
+            <div class="tabs" role="tablist" aria-label="运行详情视图">
+              <button type="button" id="tab-trace" role="tab" aria-controls="trace" aria-selected="true" data-tab="trace">执行轨迹 <span id="trace-count" class="count" hidden></span></button>
+              <button type="button" id="tab-result" role="tab" aria-controls="result" aria-selected="false" tabindex="-1" data-tab="result">最终结果</button>
+              <button type="button" id="tab-messages" role="tab" aria-controls="messages" aria-selected="false" tabindex="-1" data-tab="messages">消息记录</button>
+            </div>
+            <div class="viewer-body" id="trace" role="tabpanel" aria-labelledby="tab-trace" tabindex="0">
+              <div class="empty-state trace-empty" id="trace-empty">
+                <div class="empty-icon"><svg class="icon"><use href="#icon-flow"></use></svg></div>
+                <h3>等待任务开始</h3><p>模型和工具事件会实时出现在这里。</p>
+                <div class="flow-hint" aria-hidden="true"><span>模型请求</span><svg class="icon"><use href="#icon-chevron"></use></svg><span>工具执行</span><svg class="icon"><use href="#icon-chevron"></use></svg><span>结果回填</span></div>
+              </div>
+              <ol class="timeline" id="trace-list" hidden></ol><p id="trace-omitted" class="omitted" hidden></p>
+            </div>
+            <div class="viewer-body" id="result" role="tabpanel" aria-labelledby="tab-result" tabindex="0" hidden><div class="empty-state" id="result-empty"><div class="empty-icon"><svg class="icon"><use href="#icon-file"></use></svg></div><h3>暂无最终结果</h3></div><div class="result-content" id="result-content" hidden></div></div>
+            <div class="viewer-body" id="messages" role="tabpanel" aria-labelledby="tab-messages" tabindex="0" hidden><div class="empty-state" id="messages-empty"><div class="empty-icon"><svg class="icon"><use href="#icon-terminal"></use></svg></div><h3>暂无消息记录</h3></div><div class="message-list" id="message-list" hidden></div></div>
+          </section>
+        </div>
+
+        <section class="panel history" id="history-panel" aria-labelledby="history-panel-title">
+          <header class="panel-header history-header"><div><h2 id="history-panel-title">最近运行</h2><p id="history-summary">点击记录查看结果和轨迹。</p></div><a class="text-button" id="all-history" href="#history">查看全部 <svg class="icon"><use href="#icon-arrow"></use></svg></a></header>
+          <div class="table-scroll">
+            <table><thead><tr><th>任务</th><th>模型模式</th><th>状态</th><th>开始时间</th><th>耗时</th><th><span class="sr-only">操作</span></th></tr></thead><tbody id="history-rows"><tr><td colspan="6" class="history-empty">加载运行记录…</td></tr></tbody></table>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="config-dialog" aria-labelledby="config-title">
+    <header class="dialog-header"><h2 id="config-title">模型配置</h2><form method="dialog"><button class="icon-button" type="submit" aria-label="关闭"><svg class="icon"><use href="#icon-x"></use></svg></button></form></header>
+    <div class="dialog-content">
+      <dl class="config-list"><div><dt>DeepSeek Key</dt><dd id="config-key">等待服务反馈</dd></div><div><dt>模型</dt><dd><code id="config-model">—</code></dd></div></dl>
+      <p>在 <code>personal-agent/.env</code> 中设置 <code>DEEPSEEK_API_KEY</code>，然后重启本地服务。协议回放和固定响应可以直接运行。</p>
+    </div>
+  </dialog>
+</body>
+</html>

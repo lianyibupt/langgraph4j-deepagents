@@ -8,6 +8,20 @@
 
 **第一课默认使用 `ScriptedModelClient`：它按固定规则发出一次读取请求，再引用读取结果。** 第二课的 `DeepSeekModelClient` 实现同一个 `ModelClient` 接口，使用 `--provider deepseek` 选择真实调用。
 
+## Web 工作台
+
+从仓库根目录启动 Spring Boot 服务，然后访问 [http://127.0.0.1:8080](http://127.0.0.1:8080)。
+
+```sh
+bash personal-agent/web.sh
+```
+
+页面由手写 HTML、CSS 和 JavaScript 组成。默认使用无需 Key 的协议回放，点击「运行任务」即可观察工具调用、结果和完整消息。任务场景包含工具调用入门、源码研究、知识整理、长任务、委派与恢复。知识整理生成的 Markdown 可以在结果页下载。
+
+切换到 DeepSeek 实时调用需要现有 `.env` 中的 `DEEPSEEK_API_KEY` 和外网连接。修改 `.env` 后重启服务。Web 进程默认保留最近 20 条运行记录，任务生成的笔记、归档和检查点保存在 `out/web/` 下。委派任务可在当前进程的运行记录中恢复。
+
+启动脚本优先使用 Maven。当前机器的 Maven 依赖缓存齐全时，也可以直接用 JDK 21 编译启动。端口被占用时可运行 `bash personal-agent/web.sh --server.port=8081`。
+
 ## 运行
 
 在仓库根目录执行：

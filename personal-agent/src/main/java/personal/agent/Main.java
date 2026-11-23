@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 public final class Main {
     public static void main(String[] args) {
@@ -59,47 +60,59 @@ public final class Main {
         Path directory = selected == null ? workspace : selected;
         out.println("Workspace: " + directory.toAbsolutePath().normalize());
         try {
-            if (options.checkpointPath() != null) {
-                return printResult(runDelegation(options, directory, modelClient, new ConsoleTrace(out)), options.messages(), out);
+            Execution execution = execute(options, directory, modelClient, new ConsoleTrace(out));
+            if (execution.publicationError() != null) {
+                err.println("Status: FAILED | " + execution.publicationError());
+                if (options.messages()) printMessages(execution.result().messages(), out);
+                return 1;
             }
-            var research = selected == null ? null : new SourceResearch(directory, options.researchMode());
-            var note = options.notes() == null ? null : new NoteOutput(directory, options.output());
-            var trace = new ConsoleTrace(out);
-            var context = options.contextChars() == 0 ? null
-                    : new LongTaskContext(options.contextChars(), options.artifactsDirectory(), directory, trace);
-            var toolList = new ArrayList<Tool>(research == null
-                    ? List.of(new ReadTextTool(directory, 16 * 1024)) : research.tools());
-            if (context != null) toolList.addAll(context.tools());
-            ToolRegistry tools = new ToolRegistry(toolList);
-            // DEBUG S2-1: inspect options, modelClient and tools before starting the task.
-            var runtime = new AgentRuntime(modelClient, tools, options.maxTurns(), trace, context);
-            String question = research == null ? options.question() : research.prompt(options.question());
-            AgentResult result = runtime.run(context == null ? question : context.prompt(question));
-            if (research != null && result.finalAnswer().isPresent()) {
-                try {
-                    String answer = result.finalAnswer().orElseThrow();
-                    int verified = research.verifyCitations(answer);
-                    out.println("[trace] source.report verifiedCitations=" + verified);
-                    // DEBUG S4-1: the verified answer can now be saved to the user-selected path.
-                    if (note != null) out.println("Note saved: " + note.save(answer));
-                } catch (IllegalArgumentException e) {
-                    err.println("Status: FAILED | " + e.getMessage());
-                    if (options.messages()) printMessages(result.messages(), out);
-                    return 1;
-                } catch (IOException e) {
-                    err.println("Status: FAILED | NOTE_WRITE_FAILED: " + e.getMessage());
-                    if (options.messages()) printMessages(result.messages(), out);
-                    return 1;
-                }
-            }
-            return printResult(result, options.messages(), out);
+            if (execution.note() != null) out.println("Note saved: " + execution.note());
+            return printResult(execution.result(), options.messages(), out);
         } catch (IOException | IllegalArgumentException e) {
             err.println("Startup failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             return 1;
         }
     }
 
-    private static AgentResult runDelegation(Options options, Path directory, ModelClient parent, ConsoleTrace trace)
+    public record Execution(AgentResult result, Path note, String publicationError) {}
+
+    public static Execution execute(String[] args, Path workspace, Map<String, String> environment,
+                                    Consumer<String> trace) throws IOException {
+        Options options = Options.parse(args, environment);
+        Path directory = options.researchDirectory() == null ? workspace : options.researchDirectory();
+        return execute(options, directory, model(options, environment, trace), trace);
+    }
+
+    private static Execution execute(Options options, Path directory, ModelClient modelClient, Consumer<String> trace)
+            throws IOException {
+        if (options.checkpointPath() != null) {
+            return new Execution(runDelegation(options, directory, modelClient, trace), null, null);
+        }
+        var research = options.researchDirectory() == null ? null : new SourceResearch(directory, options.researchMode());
+        var note = options.notes() == null ? null : new NoteOutput(directory, options.output());
+        var context = options.contextChars() == 0 ? null
+                : new LongTaskContext(options.contextChars(), options.artifactsDirectory(), directory, trace);
+        var toolList = new ArrayList<Tool>(research == null
+                ? List.of(new ReadTextTool(directory, 16 * 1024)) : research.tools());
+        if (context != null) toolList.addAll(context.tools());
+        // DEBUG S2-1: inspect options, modelClient and tools before starting the task.
+        var runtime = new AgentRuntime(modelClient, new ToolRegistry(toolList), options.maxTurns(), trace, context);
+        String question = research == null ? options.question() : research.prompt(options.question());
+        AgentResult result = runtime.run(context == null ? question : context.prompt(question));
+        if (research == null || result.finalAnswer().isEmpty()) return new Execution(result, null, null);
+        try {
+            String answer = result.finalAnswer().orElseThrow();
+            trace.accept("source.report verifiedCitations=" + research.verifyCitations(answer));
+            // DEBUG S4-1: the verified answer can now be saved to the user-selected path.
+            return new Execution(result, note == null ? null : note.save(answer), null);
+        } catch (IllegalArgumentException e) {
+            return new Execution(result, null, e.getMessage());
+        } catch (IOException e) {
+            return new Execution(result, null, "NOTE_WRITE_FAILED: " + e.getMessage());
+        }
+    }
+
+    private static AgentResult runDelegation(Options options, Path directory, ModelClient parent, Consumer<String> trace)
             throws IOException {
         ModelClient reader = options.provider().equals("replay")
                 ? new DeepSeekModelClient(options.model(), new ReplayTransport(options.file()), trace, options.wire())
@@ -121,7 +134,7 @@ public final class Main {
         return result.status() == AgentResult.Status.COMPLETED || result.status() == AgentResult.Status.PAUSED ? 0 : 1;
     }
 
-    private static ModelClient model(Options options, Map<String, String> env, ConsoleTrace trace) {
+    private static ModelClient model(Options options, Map<String, String> env, Consumer<String> trace) {
         return switch (options.provider()) {
             case "scripted" -> new ScriptedModelClient(options.file());
             case "replay" -> new DeepSeekModelClient(options.model(), options.replayTransport(), trace, options.wire());
