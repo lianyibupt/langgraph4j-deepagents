@@ -10,6 +10,7 @@ let knowledgeSearchVersion = 0;
 function knowledgeButtons() {
   const selected = knowledgeSelection.size > 0;
   byId("knowledge-run-replay").disabled = knowledgeBusy || !selected;
+  byId("knowledge-run-lmstudio").disabled = knowledgeBusy || !selected || !config?.lmStudioConfigured;
   byId("knowledge-run-deepseek").disabled = knowledgeBusy || !selected || !config?.deepSeekConfigured;
   byId("knowledge-search-button").disabled = knowledgeBusy || !knowledgeState?.configured;
   byId("knowledge-refresh").disabled = knowledgeBusy || !knowledgeState?.configured;
@@ -123,6 +124,7 @@ byId("knowledge-refresh").addEventListener("click", async () => {
   finally { knowledgeBusy = false; knowledgeButtons(); }
 });
 byId("knowledge-run-replay").addEventListener("click", () => startKnowledge("replay"));
+byId("knowledge-run-lmstudio").addEventListener("click", () => startKnowledge("lmstudio"));
 byId("knowledge-run-deepseek").addEventListener("click", () => startKnowledge("deepseek"));
 for (const button of document.querySelectorAll("[data-knowledge-query]")) button.addEventListener("click", () => {
   byId("knowledge-query").value = button.dataset.knowledgeQuery; searchKnowledge();

@@ -58,6 +58,7 @@ function renderManagement(data) {
   for (const prefix of ["watch", "goal"]) {
     const selector = byId(`${prefix}-provider`);
     selector.querySelector('[value="deepseek"]').disabled = !config?.deepSeekConfigured;
+    selector.querySelector('[value="lmstudio"]').disabled = !config?.lmStudioConfigured;
     if (!byId(`${prefix}-path`).value) defaultScope(prefix);
   }
   stableList("watch-list", data.watches.toReversed().filter(watch => byId("watch-filter").value === "all" || (byId("watch-filter").value === "stopped" ? watch.status === "STOPPED" : watch.status !== "STOPPED")), watch => {

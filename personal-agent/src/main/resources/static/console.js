@@ -5,7 +5,7 @@ const presets = byId("preset");
 const providers = byId("provider");
 const question = byId("question");
 const maxTurns = byId("max-turns");
-const providerNames = { replay: "协议回放", scripted: "固定响应", deepseek: "DeepSeek 实时" };
+const providerNames = { replay: "协议回放", scripted: "固定响应", deepseek: "DeepSeek 实时", lmstudio: "LM Studio 本地" };
 const statuses = { RUNNING: "运行中", PAUSED: "已暂停", COMPLETED: "已完成", FAILED: "失败", TURN_LIMIT: "已达轮次上限", RECOVERY_REQUIRED: "待核对", WAITING_INPUT: "等待回答", CANCELLED: "已停止", QUEUED: "等待槽位" };
 const eventTypes = {
   "model.request": ["请求模型", "model", "flow"],
@@ -15,6 +15,8 @@ const eventTypes = {
   "run.stop": ["Agent 停止", "done", "check"],
   "deepseek.request": ["发送协议请求", "model", "arrow"],
   "deepseek.response": ["收到协议响应", "model", "arrow"],
+  "lmstudio.request": ["发送本地模型请求", "model", "arrow"],
+  "lmstudio.response": ["收到本地模型响应", "model", "arrow"],
   "source.report": ["校验报告引用", "done", "check"],
   "plan.status": ["更新任务计划", "tool", "file"],
   "context.prepare": ["准备模型上下文", "model", "flow"],
@@ -114,7 +116,10 @@ function renderConfig() {
 function renderModelConfig() {
   byId("config-key").textContent = config.deepSeekConfigured ? "已配置 · 连通性待实际运行验证" : "待配置";
   byId("config-model").textContent = config.model;
+  byId("config-lmstudio").textContent = config.lmStudioConfigured ? "已配置 · 需本机 LM Studio 正在运行" : "待配置";
+  byId("config-lmstudio-model").textContent = config.lmStudioModel;
   providers.querySelector('[value="deepseek"]').disabled = !config.deepSeekConfigured;
+  providers.querySelector('[value="lmstudio"]').disabled = !config.lmStudioConfigured;
   if (providers.selectedOptions[0].disabled) providers.value = "replay";
   updateProvider();
   if (typeof knowledgeButtons === "function") knowledgeButtons();
@@ -142,7 +147,8 @@ function updateProvider() {
   const help = {
     replay: "回放模型协议并真实执行工具，无需联网。",
     scripted: "用固定响应验证 Agent 循环，无需联网。",
-    deepseek: `使用 ${config?.model || "DeepSeek"}，任务和读取的资料可能发送给模型。`
+    deepseek: `使用 ${config?.model || "DeepSeek"}，任务和读取的资料可能发送给模型。`,
+    lmstudio: `使用 ${config?.lmStudioModel || "本地模型"}，推理在本机完成，任务和资料不会离开这台电脑。`
   };
   byId("provider-description").textContent = help[providers.value];
 }

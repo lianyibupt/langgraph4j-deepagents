@@ -422,5 +422,12 @@ final class ProactiveAgent {
         return java.util.Arrays.stream(keywords.split("[,，]")).map(String::strip).filter(item -> !item.isEmpty()).anyMatch(item -> lower.contains(item.toLowerCase(java.util.Locale.ROOT)));
     }
     private static void validateMode(String mode) { if (!List.of("observe", "auto").contains(mode)) throw new IllegalArgumentException("请选择观察或自动模式。"); }
-    private void validateProvider(String provider) { if (!List.of("replay", "deepseek").contains(provider) || (provider.equals("deepseek") && !runs.config().deepSeekConfigured())) throw new IllegalArgumentException("模型模式无效或 DeepSeek 未配置。"); }
+    private void validateProvider(String provider) {
+        String selected = provider == null ? "" : provider;
+        boolean deepseek = "deepseek".equals(selected);
+        boolean lmstudio = "lmstudio".equals(selected);
+        if (!List.of("replay", "deepseek", "lmstudio").contains(selected)) throw new IllegalArgumentException("模型模式无效。");
+        if (deepseek && !runs.config().deepSeekConfigured()) throw new IllegalArgumentException("DeepSeek 未配置。");
+        if (lmstudio && !runs.config().lmStudioConfigured()) throw new IllegalArgumentException("本地 LM Studio 未配置。");
+    }
 }

@@ -3,6 +3,8 @@ package personal.agent;
 import personal.agent.deepseek.DeepSeekHttpTransport;
 import personal.agent.deepseek.DeepSeekModelClient;
 import personal.agent.deepseek.ReplayTransport;
+import personal.agent.lmstudio.LmStudioHttpTransport;
+import personal.agent.lmstudio.LmStudioModelClient;
 import personal.agent.delegation.CheckpointStore;
 import personal.agent.delegation.DelegateTool;
 import personal.agent.delegation.DelegationReplayTransport;
@@ -60,6 +62,7 @@ public final class Main {
                 + (options.provider().equals("scripted") ? "scripted（固定响应替身）" : options.model()));
         if (options.provider().equals("replay")) out.println("协议回放模式：不访问网络，没有真实模型推理。");
         if (options.provider().equals("deepseek")) out.println("DeepSeek 真实模式：thinking=disabled，工作目录资料可能随工具结果发给模型。");
+        if (options.provider().equals("lmstudio")) out.println("LM Studio 本地模式：推理在本机 127.0.0.1 完成，任务与资料不会离开这台电脑。");
         Path selected = options.researchDirectory();
         Path directory = selected == null ? workspace : selected;
         out.println("Workspace: " + directory.toAbsolutePath().normalize());
@@ -205,8 +208,48 @@ public final class Main {
                 long timeout = Long.parseLong(env.getOrDefault("DEEPSEEK_TIMEOUT_SECONDS", "60"));
                 yield new DeepSeekModelClient(options.model(), new DeepSeekHttpTransport(key, Duration.ofSeconds(timeout)), trace, options.wire());
             }
+            case "lmstudio" -> {
+                String baseUrl = env.getOrDefault("LMSTUDIO_BASE_URL", LmStudioHttpTransport.DEFAULT_BASE_URL);
+                String key = env.get("LMSTUDIO_API_KEY");
+                long timeout = environmentLong(env, "LMSTUDIO_TIMEOUT_SECONDS", 180);
+                int maxTokens = environmentInt(env, "LMSTUDIO_MAX_TOKENS", 2048);
+                double temperature = environmentDouble(env, "LMSTUDIO_TEMPERATURE", 0.3);
+                yield new LmStudioModelClient(options.model(),
+                        new LmStudioHttpTransport(baseUrl, key, Duration.ofSeconds(timeout)),
+                        trace, options.wire(), maxTokens, temperature);
+            }
             default -> throw new IllegalArgumentException("Unknown provider");
         };
+    }
+
+    private static int environmentInt(Map<String, String> env, String key, int fallback) {
+        String raw = env.get(key);
+        if (raw == null || raw.isBlank()) return fallback;
+        try {
+            return Integer.parseInt(raw.strip());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(key + " must be an integer");
+        }
+    }
+
+    private static long environmentLong(Map<String, String> env, String key, long fallback) {
+        String raw = env.get(key);
+        if (raw == null || raw.isBlank()) return fallback;
+        try {
+            return Long.parseLong(raw.strip());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(key + " must be an integer");
+        }
+    }
+
+    private static double environmentDouble(Map<String, String> env, String key, double fallback) {
+        String raw = env.get(key);
+        if (raw == null || raw.isBlank()) return fallback;
+        try {
+            return Double.parseDouble(raw.strip());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(key + " must be a number");
+        }
     }
 
     private record Options(String provider, String file, String model, String question,
@@ -230,7 +273,7 @@ public final class Main {
         }
 
         static Options parse(String[] args, Map<String, String> env) {
-            String provider = null, file = null, model = env.getOrDefault("DEEPSEEK_MODEL", "deepseek-flash");
+            String provider = null, file = null, model = null;
             String question = null;
             Path repository = null;
             Path notes = null;
@@ -279,7 +322,7 @@ public final class Main {
             boolean research = repository != null || notes != null;
             boolean delegation = checkpoint != null || resume != null;
             if (provider == null) provider = research || contextChars > 0 || delegation ? "replay" : "scripted";
-            if (!List.of("scripted", "replay", "deepseek").contains(provider)) throw new IllegalArgumentException("--provider must be scripted, replay or deepseek");
+            if (!List.of("scripted", "replay", "deepseek", "lmstudio").contains(provider)) throw new IllegalArgumentException("--provider must be scripted, replay, deepseek or lmstudio");
             if (research && ("scripted".equals(provider) || file != null)) {
                 throw new IllegalArgumentException("--repo and --notes use replay or deepseek and cannot be combined with --file");
             }
@@ -296,6 +339,9 @@ public final class Main {
                 throw new IllegalArgumentException("long-task replay uses the example file; --repo or --notes with a context budget requires --provider deepseek");
             }
             if (contextChars > 0 && artifactsDirectory == null) artifactsDirectory = Path.of("out/agent-runs");
+            if (model == null) model = "lmstudio".equals(provider)
+                    ? env.getOrDefault("LMSTUDIO_MODEL", "qwen3.8-9b-distill")
+                    : env.getOrDefault("DEEPSEEK_MODEL", "deepseek-flash");
             if (model.isBlank()) throw new IllegalArgumentException("--model must not be blank");
             if (file == null) file = contextChars == 0 ? "agent-loop.md" : "long-task.md";
             if (delegation && !direct && !research && contextChars == 0 && resume == null) {
@@ -331,7 +377,7 @@ public final class Main {
     }
 
     private static void help(PrintStream out) {
-        out.println("Usage: bash run.sh [--debug] [--provider scripted|replay|deepseek] [--model NAME]");
+        out.println("Usage: bash run.sh [--debug] [--provider scripted|replay|deepseek|lmstudio] [--model NAME]");
         out.println("       [--file RELATIVE_PATH | --repo DIRECTORY | --notes DIRECTORY --output NOTE.md]");
         out.println("       [--question TEXT] [--max-turns N] [--messages] [--wire] [--help]");
         out.println("       [--context-chars N [--artifacts-dir DIRECTORY]]");
@@ -339,5 +385,7 @@ public final class Main {
         out.println("Default: scripted for examples, offline replay for --repo and --notes. DeepSeek must be selected explicitly.");
         out.println("Configuration: project .env; process environment overrides file values.");
         out.println("DeepSeek needs DEEPSEEK_API_KEY; optional DEEPSEEK_MODEL and DEEPSEEK_TIMEOUT_SECONDS.");
+        out.println("LM Studio needs a loopback LMSTUDIO_BASE_URL (default http://127.0.0.1:1234/v1); optional");
+        out.println("LMSTUDIO_API_KEY, LMSTUDIO_MODEL, LMSTUDIO_TIMEOUT_SECONDS and LMSTUDIO_MAX_TOKENS.");
     }
 }

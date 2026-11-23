@@ -1,6 +1,6 @@
 # Java 个人 Agent 学习项目
 
-项目已实现十三课。基础循环见下文，模型协议与断点见 [第二课](STAGE2.md)，源码研究见 [第三课](STAGE3.md)，Markdown 笔记见 [第四课](STAGE4.md)，计划与上下文见 [第五课](STAGE5.md)，委派与检查点恢复见 [第六课](STAGE6.md)，Web 研究任务与跨进程恢复见 [第七课](STAGE7.md)。第八到十二课覆盖持续关注、协作输入、通知交付、多任务监督和长期目标，第十三课接入最近一年个人知识，见下方课程表。DeepSeek 使用项目 `.env` 中的 API Key。
+项目已实现十四课。基础循环见下文，模型协议与断点见 [第二课](STAGE2.md)，源码研究见 [第三课](STAGE3.md)，Markdown 笔记见 [第四课](STAGE4.md)，计划与上下文见 [第五课](STAGE5.md)，委派与检查点恢复见 [第六课](STAGE6.md)，Web 研究任务与跨进程恢复见 [第七课](STAGE7.md)。第八到十二课覆盖持续关注、协作输入、通知交付、多任务监督和长期目标，第十三课接入最近一年个人知识，第十四课接入本机 LM Studio 的本地模型，见下方课程表。DeepSeek 使用项目 `.env` 中的 API Key；本机 LM Studio 不需要外网。
 
 下文保留第一课的学习步骤。
 
@@ -34,8 +34,31 @@ bash personal-agent/web.sh
 | [第十一课](STAGE11.md) | 运行控制台 | 两项并行任务、实时状态和实际模型输入 |
 | [第十二课](STAGE12.md) | 长期目标 | 按范围召回偏好、持续服务建议与授权 |
 | [第十三课](STAGE13.md) | 个人知识库 | 最近一年资料的本地检索、预览选择与 Agent 上下文 |
+| [第十四课](STAGE14.md) | 本地模型 | 用本机 LM Studio 提供 OpenAI 兼容接口，资料不出本机 |
 
-在 `.env` 配置 `PERSONAL_KNOWLEDGE_ROOT`，重启后访问 [个人知识库](http://127.0.0.1:8080/#knowledge)。默认排除日期不明的旧导入资料，仅在本地检索与预览。你明确选择资料、点击 DeepSeek 整理后，选中文件才对本次模型可读。执行详情保留检索依据、资料版本、工具结果与最终引用。日期依据与局限见 [第十三课](STAGE13.md)。
+在 `.env` 配置 `PERSONAL_KNOWLEDGE_ROOT`，重启后访问 [个人知识库](http://127.0.0.1:8080/#knowledge)。默认排除日期不明的旧导入资料，仅在本地检索与预览。你明确选择资料、点击 DeepSeek 或本地 LM Studio 整理后，选中文件才对本次模型可读。执行详情保留检索依据、资料版本、工具结果与最终引用。日期依据与局限见 [第十三课](STAGE13.md)。
+
+## 本地模型（LM Studio）
+
+第十四课给运行时增加了 `lmstudio` 提供方：同一套消息与工具协议，走本机 LM Studio 的 OpenAI 兼容接口。传输层只接受 `http` 回环地址（`127.0.0.1`、`localhost`、`::1`），即使把 `LMSTUDIO_BASE_URL` 写错成远程地址也会在发请求前拒绝，因此任务与读取的资料不会离开这台电脑。
+
+```sh
+# LM Studio 里先加载模型并启动本地服务器（默认 127.0.0.1:1234）
+bash personal-agent/run-lmstudio.sh --question "读取 agent-loop.md 并概括要点"
+bash personal-agent/run.sh --provider lmstudio --model qwen3.8-9b-distill --messages
+```
+
+`.env` 中的配置项：
+
+```dotenv
+LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1
+LMSTUDIO_API_KEY=
+LMSTUDIO_MODEL=qwen3.8-9b-distill
+LMSTUDIO_TIMEOUT_SECONDS=180
+LMSTUDIO_MAX_TOKENS=2048
+```
+
+`LMSTUDIO_API_KEY` 可留空（LM Studio 关闭鉴权时）；打开鉴权时填 Server Settings 里创建的 permission token。`LMSTUDIO_MAX_TOKENS` 要覆盖思考加正文，低于 800 容易只得到空的正文；本地推理模型偶尔只思考不回答，客户端会自动补充一次“请直接输出最终回答”的提示重试一次，仍为空才报错。Web 控制台的「模型模式」、持续关注和长期目标都可以选择「LM Studio 本地」，知识库页面多了一个「用本地 LM Studio 整理」按钮，不再需要外部模型确认。细节与实测见 [第十四课](STAGE14.md)。
 
 Web 任务最多两项同时执行。源码和知识整理支持自选目录，监控与研究遵守资料白名单。持续关注使用固定资料快照，事件记录接单原因并关联到运行。通知渠道为本机站内通知，目标召回采用可核对的目录与关键词规则。运行状态保存在 `out/web/runs.json`，关注、事件、目标和投递状态保存在 `out/web/management.json`。
 

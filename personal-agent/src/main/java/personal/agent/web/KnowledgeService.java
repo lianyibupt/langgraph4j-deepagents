@@ -49,9 +49,12 @@ final class KnowledgeService {
     }
 
     synchronized AgentRuns.Detail start(Start request) {
-        if (!List.of("replay", "deepseek").contains(request.provider() == null ? "" : request.provider())) throw new IllegalArgumentException("请选择协议回放或 DeepSeek。");
-        if (request.provider().equals("deepseek") && !request.confirmExternal()) throw new IllegalArgumentException("只有你明确选择资料并点击启动 DeepSeek 后，才能将这些资料交给外部模型。");
-        if (request.provider().equals("deepseek") && !runs.config().deepSeekConfigured()) throw new IllegalArgumentException("请先配置 DEEPSEEK_API_KEY。");
+        String provider = request.provider() == null ? "" : request.provider();
+        if (!List.of("replay", "deepseek", "lmstudio").contains(provider)) throw new IllegalArgumentException("请选择协议回放、DeepSeek 或本地 LM Studio。");
+        if (provider.equals("deepseek") && !request.confirmExternal()) throw new IllegalArgumentException("只有你明确选择资料并点击启动 DeepSeek 后，才能将这些资料交给外部模型。");
+        if (provider.equals("deepseek") && !runs.config().deepSeekConfigured()) throw new IllegalArgumentException("请先配置 DEEPSEEK_API_KEY。");
+        // LM Studio runs on this machine, so no external-model confirmation is required.
+        if (provider.equals("lmstudio") && !runs.config().lmStudioConfigured()) throw new IllegalArgumentException("请先配置 LMSTUDIO_BASE_URL 与 LMSTUDIO_MODEL，并在本机启动 LM Studio 服务器。");
         String question = request.question() == null ? "" : request.question().strip();
         if (question.isEmpty() || question.length() > 4000 || question.startsWith("--")) throw new IllegalArgumentException("请填写 1 到 4000 字的研究问题。");
         if (!runs.hasCapacity()) throw new IllegalStateException("两个执行槽位均在运行，请稍候。");

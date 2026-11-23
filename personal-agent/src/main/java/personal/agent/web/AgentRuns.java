@@ -44,7 +44,8 @@ final class AgentRuns {
                     "总结资料中工具执行和结果回填的过程。"));
 
     record Preset(String id, String name, String description, String input, int maxTurns, String question) {}
-    record Config(String model, boolean deepSeekConfigured, int historyLimit, List<Preset> presets, String projectPath, int concurrency) {}
+    record Config(String model, boolean deepSeekConfigured, boolean lmStudioConfigured, String lmStudioModel,
+                  int historyLimit, List<Preset> presets, String projectPath, int concurrency) {}
     record Request(String preset, String provider, String question, Integer maxTurns, boolean pause, String inputPath) {
         Request(String preset, String provider, String question, Integer maxTurns, boolean pause) {
             this(preset, provider, question, maxTurns, pause, null);
@@ -98,7 +99,16 @@ final class AgentRuns {
 
     Config config() {
         return new Config(env.getOrDefault("DEEPSEEK_MODEL", "deepseek-flash"),
-                !env.getOrDefault("DEEPSEEK_API_KEY", "").isBlank(), HISTORY_LIMIT, PRESETS, project.toString(), 2);
+                !env.getOrDefault("DEEPSEEK_API_KEY", "").isBlank(),
+                lmStudioConfigured(),
+                env.getOrDefault("LMSTUDIO_MODEL", "qwen3.8-9b-distill"),
+                HISTORY_LIMIT, PRESETS, project.toString(), 2);
+    }
+
+    /** LM Studio runs on this machine, so only the local endpoint/model settings are required. */
+    private boolean lmStudioConfigured() {
+        return !env.getOrDefault("LMSTUDIO_BASE_URL", "").isBlank()
+                || !env.getOrDefault("LMSTUDIO_MODEL", "").isBlank();
     }
 
     synchronized List<Summary> list() {
@@ -175,12 +185,15 @@ final class AgentRuns {
             throw new IllegalArgumentException("请先到个人知识库检索、预览并选择本次资料。");
         }
         String provider = request.provider();
-        if (!"replay".equals(provider) && !"deepseek".equals(provider)
+        if (!"replay".equals(provider) && !"deepseek".equals(provider) && !"lmstudio".equals(provider)
                 && !("scripted".equals(provider) && preset.id().equals("loop"))) {
             throw new IllegalArgumentException("当前场景不支持该模型模式。");
         }
         if ("deepseek".equals(provider) && !config().deepSeekConfigured()) {
             throw new IllegalArgumentException("请在 personal-agent/.env 填写 DEEPSEEK_API_KEY 后重启控制台。");
+        }
+        if ("lmstudio".equals(provider) && !config().lmStudioConfigured()) {
+            throw new IllegalArgumentException("请在 personal-agent/.env 配置 LMSTUDIO_BASE_URL 与 LMSTUDIO_MODEL 后重启控制台。");
         }
         String question = request.question() == null ? "" : request.question().strip();
         if (question.isEmpty() || question.length() > 4000 || question.startsWith("--")) {
