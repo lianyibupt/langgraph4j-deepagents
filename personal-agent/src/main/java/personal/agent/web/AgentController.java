@@ -21,9 +21,11 @@ import java.util.UUID;
 @RequestMapping("/api")
 final class AgentController {
     private final AgentRuns runs;
+    private final ProactiveAgent proactive;
 
-    AgentController(AgentRuns runs) {
+    AgentController(AgentRuns runs, ProactiveAgent proactive) {
         this.runs = runs;
+        this.proactive = proactive;
     }
 
     @GetMapping("/config")
@@ -34,6 +36,9 @@ final class AgentController {
 
     @GetMapping("/runs/{id}")
     AgentRuns.Detail detail(@PathVariable("id") UUID id) { return runs.detail(id); }
+
+    @GetMapping("/runs/{id}/recovery")
+    AgentRuns.Recovery recovery(@PathVariable("id") UUID id) { return runs.recovery(id); }
 
     @GetMapping("/runs/{id}/note")
     ResponseEntity<String> note(@PathVariable("id") UUID id) {
@@ -47,7 +52,43 @@ final class AgentController {
 
     @PostMapping(value = "/runs", consumes = "application/json")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    AgentRuns.Detail start(@RequestBody AgentRuns.Request request) { return runs.start(request); }
+    AgentRuns.Detail start(@RequestBody AgentRuns.Request request) { return proactive.startManual(request); }
+
+    record Text(String text) {}
+    record Enabled(boolean enabled) {}
+
+    @PostMapping("/runs/{id}/input")
+    AgentRuns.Detail input(@PathVariable UUID id, @RequestBody Text body) { return runs.input(id, body.text()); }
+
+    @PostMapping("/runs/{id}/actions/{action}")
+    AgentRuns.Detail action(@PathVariable UUID id, @PathVariable String action) { return runs.action(id, action); }
+
+    @GetMapping("/management")
+    ProactiveAgent.State management() { return proactive.view(); }
+
+    @PostMapping("/watches")
+    ProactiveAgent.Watch watch(@RequestBody ProactiveAgent.WatchRequest body) { return proactive.createWatch(body); }
+
+    @PostMapping("/watches/{id}/{action}")
+    void watchAction(@PathVariable String id, @PathVariable String action) { proactive.watchAction(id, action); }
+
+    @PostMapping("/triggers/{id}/approve")
+    void approve(@PathVariable String id) { proactive.approve(id); }
+
+    @PostMapping("/delivery")
+    void delivery(@RequestBody Enabled body) { proactive.delivery(body.enabled()); }
+
+    @PostMapping("/notices/{id}/{action}")
+    void notice(@PathVariable String id, @PathVariable String action) { proactive.noticeAction(id, action); }
+
+    @PostMapping("/goals")
+    ProactiveAgent.Goal goal(@RequestBody ProactiveAgent.GoalRequest body) { return proactive.createGoal(body); }
+
+    @PostMapping("/goals/{id}")
+    void goalEnabled(@PathVariable String id, @RequestBody Enabled body) { proactive.goalEnabled(id, body.enabled()); }
+
+    @PostMapping("/suggestions/{id}")
+    void suggestion(@PathVariable String id, @RequestBody Enabled body) { proactive.suggestionAction(id, body.enabled()); }
 
     @PostMapping(value = "/runs/{id}/resume", consumes = "application/json")
     @ResponseStatus(HttpStatus.ACCEPTED)

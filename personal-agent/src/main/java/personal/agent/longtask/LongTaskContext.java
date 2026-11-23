@@ -45,6 +45,26 @@ public final class LongTaskContext {
         artifacts.reset();
     }
 
+    /** Rebuild runtime state from durable results without executing historical tools. */
+    public void restore(List<Message> history) throws IOException {
+        reset();
+        for (int i = 1; i < history.size(); i++) {
+            Message assistant = history.get(i);
+            for (var call : assistant.toolCalls()) {
+                Message message = history.get(++i);
+                if (call.name().equals("update_plan") && !message.toolError()) {
+                    var result = updatePlan(call.arguments().get("steps"));
+                    if (result.error() || !message.text().equals(result.text())) {
+                        throw new IOException("CHECKPOINT_PLAN_INVALID");
+                    }
+                }
+                // DEBUG S7-2: original results regenerate stable run-local artifact IDs.
+                record(call, new ToolResult(message.text(), message.toolError()));
+            }
+        }
+        trace.accept("context.restored planSteps=" + plan.size() + " artifacts=" + artifacts.count());
+    }
+
     public List<Tool> tools() {
         return List.of(new Tool() {
             private final Definition definition = new Definition("update_plan", "Replace the current task plan",
@@ -144,6 +164,9 @@ public final class LongTaskContext {
             int from = omitted == 0 ? 1 : batchStarts.get(omitted);
             var snapshot = new ArrayList<Message>();
             String state = "\n\n[运行时状态]\n当前计划 " + planJson + summary(history, from, omitted);
+            for (int i = 1; i < from; i++) {
+                if (history.get(i).role() == Message.Role.USER) state += "\n\n持续生效的补充要求\n" + history.get(i).text();
+            }
             snapshot.add(Message.user(history.getFirst().text() + state));
             snapshot.addAll(projected.subList(from, projected.size()));
             long chars = snapshot.stream().mapToLong(LongTaskContext::measure).sum();

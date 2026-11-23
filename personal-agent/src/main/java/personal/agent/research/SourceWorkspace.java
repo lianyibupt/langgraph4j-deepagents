@@ -9,6 +9,12 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import personal.agent.OutputPaths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -46,6 +52,66 @@ final class SourceWorkspace {
         this.root = root.toRealPath();
         this.reader = new ReadTextTool(this.root, FILE_BYTES);
         this.markdownOnly = markdownOnly;
+    }
+
+    String fingerprint() throws IOException {
+        return inventory().version();
+    }
+
+    record Inventory(String version, Map<String, String> files) {}
+
+    Inventory inventory() throws IOException {
+        var scan = scan();
+        if (scan.truncated()) throw new IOException("CHECKPOINT_INPUT_LIMIT: input scan must be complete");
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            var versions = new LinkedHashMap<String, String>();
+            long total = 0;
+            for (var file : scan.files()) {
+                String content = String.join("\n", readLines(file.relative()));
+                byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+                total += bytes.length;
+                if (total > SEARCH_BYTES) throw new IOException("CHECKPOINT_INPUT_LIMIT: input exceeds 4 MiB");
+                digest.update(file.relative().toString().getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 0);
+                digest.update(Integer.toString(bytes.length).getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 0);
+                digest.update(bytes);
+                versions.put(file.relative().toString(), HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
+            }
+            return new Inventory(HexFormat.of().formatHex(digest.digest()), Map.copyOf(versions));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    void snapshot(Path requested, String version) throws IOException {
+        Path destination = OutputPaths.resolveDirectory(requested.toAbsolutePath().normalize());
+        if (destination.startsWith(root)) throw new IOException("SNAPSHOT_SCOPE: choose a path outside the input");
+        if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+            if (!new SourceWorkspace(destination, markdownOnly).fingerprint().equals(version)) throw new IOException("SNAPSHOT_CONFLICT");
+            return;
+        }
+        Files.createDirectories(destination.getParent());
+        Path temporary = Files.createTempDirectory(destination.getParent(), ".snapshot-");
+        try {
+            for (var file : scan().files()) {
+                Path target = temporary.resolve(file.relative());
+                Files.createDirectories(target.getParent());
+                Files.writeString(target, String.join("\n", readLines(file.relative())), StandardCharsets.UTF_8);
+            }
+            if (!new SourceWorkspace(temporary, markdownOnly).fingerprint().equals(version) || !fingerprint().equals(version)) {
+                throw new IOException("SNAPSHOT_INPUT_CHANGED: input changed while capturing");
+            }
+            // DEBUG S8-1: this immutable input version will belong to exactly one event.
+            Files.move(temporary, destination, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } finally {
+            if (Files.exists(temporary)) {
+                try (var paths = Files.walk(temporary)) {
+                    for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
+                }
+            }
+        }
     }
 
     Listing list(String filter) throws IOException {

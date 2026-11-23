@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import personal.agent.Tool;
 import personal.agent.ToolResult;
+import personal.agent.Message;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -64,6 +65,50 @@ public final class SourceResearch {
                     excerpt.lines().forEach(line -> readLines.set(line.number()));
                     return excerpt;
                 }));
+    }
+
+    public String fingerprint() throws IOException { return workspace.fingerprint(); }
+    public record Inventory(String version, Map<String, String> files) {}
+    public Inventory inventory() throws IOException {
+        var state = workspace.inventory();
+        return new Inventory(state.version(), state.files());
+    }
+    public void snapshot(Path destination, String version) throws IOException { workspace.snapshot(destination, version); }
+    public boolean relevant(List<String> changed, String keywords) throws IOException {
+        if (keywords == null || keywords.isBlank()) return true;
+        for (String keyword : keywords.split("[,，]")) {
+            String term = keyword.strip();
+            if (term.isEmpty()) continue;
+            if (changed.stream().anyMatch(path -> path.toLowerCase(java.util.Locale.ROOT).contains(term.toLowerCase(java.util.Locale.ROOT)))) return true;
+            if (workspace.search(term).hits().stream().anyMatch(hit -> changed.contains(hit.path()))) return true;
+        }
+        return false;
+    }
+
+    public void restoreEvidence(List<Message> history) throws IOException {
+        evidence.clear();
+        for (int i = 1; i < history.size(); i++) {
+            Message assistant = history.get(i);
+            for (var call : assistant.toolCalls()) {
+                Message result = history.get(++i);
+                if (!call.name().equals(mode.readTool) || result.toolError()) continue;
+                var excerpt = json.readValue(result.text(), SourceWorkspace.Excerpt.class);
+                if (excerpt.path() == null || excerpt.lines() == null || excerpt.lines().isEmpty()
+                        || excerpt.lines().size() > 40 || !excerpt.path().equals(call.arguments().get("path"))) {
+                    throw new IOException("CHECKPOINT_EVIDENCE_INVALID");
+                }
+                // DEBUG S7-1: restore only ranges that successful reads actually returned.
+                var lines = evidence.computeIfAbsent(excerpt.path(), ignored -> new BitSet());
+                int start = Integer.parseInt(call.arguments().get("start_line"));
+                int end = Integer.parseInt(call.arguments().get("end_line"));
+                for (var line : excerpt.lines()) {
+                    if (line.number() < start || line.number() > end || line.number() > 512 * 1024) {
+                        throw new IOException("CHECKPOINT_EVIDENCE_INVALID");
+                    }
+                    lines.set(line.number());
+                }
+            }
+        }
     }
 
     public String prompt(String question) {

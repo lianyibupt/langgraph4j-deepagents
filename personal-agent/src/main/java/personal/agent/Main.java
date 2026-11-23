@@ -15,6 +15,10 @@ import java.io.PrintStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -60,7 +64,7 @@ public final class Main {
         Path directory = selected == null ? workspace : selected;
         out.println("Workspace: " + directory.toAbsolutePath().normalize());
         try {
-            Execution execution = execute(options, directory, modelClient, new ConsoleTrace(out));
+            Execution execution = execute(options, directory, modelClient, new ConsoleTrace(out), AgentControl.NONE);
             if (execution.publicationError() != null) {
                 err.println("Status: FAILED | " + execution.publicationError());
                 if (options.messages()) printMessages(execution.result().messages(), out);
@@ -78,27 +82,70 @@ public final class Main {
 
     public static Execution execute(String[] args, Path workspace, Map<String, String> environment,
                                     Consumer<String> trace) throws IOException {
-        Options options = Options.parse(args, environment);
-        Path directory = options.researchDirectory() == null ? workspace : options.researchDirectory();
-        return execute(options, directory, model(options, environment, trace), trace);
+        return execute(args, workspace, environment, trace, AgentControl.NONE);
     }
 
-    private static Execution execute(Options options, Path directory, ModelClient modelClient, Consumer<String> trace)
+    public static Execution execute(String[] args, Path workspace, Map<String, String> environment,
+                                    Consumer<String> trace, AgentControl control) throws IOException {
+        Options options = Options.parse(args, environment);
+        Path directory = options.researchDirectory() == null ? workspace : options.researchDirectory();
+        return execute(options, directory, model(options, environment, trace), trace, control);
+    }
+
+    private static Execution execute(Options options, Path directory, ModelClient modelClient, Consumer<String> trace, AgentControl control)
             throws IOException {
-        if (options.checkpointPath() != null) {
-            return new Execution(runDelegation(options, directory, modelClient, trace), null, null);
+        if (options.delegation()) {
+            return new Execution(runDelegation(options, directory, modelClient, trace, control), null, null);
         }
         var research = options.researchDirectory() == null ? null : new SourceResearch(directory, options.researchMode());
-        var note = options.notes() == null ? null : new NoteOutput(directory, options.output());
+        var note = options.notes() == null ? null : new NoteOutput(directory, options.output(), options.resume() != null);
         var context = options.contextChars() == 0 ? null
                 : new LongTaskContext(options.contextChars(), options.artifactsDirectory(), directory, trace);
+        if (options.checkpointPath() == null) {
+            return executeTask(options, directory, modelClient, trace, research, note, context, null, control);
+        }
+        String version = inputVersion(options, directory, research);
+        var settings = Map.of("mode", research == null ? (context == null ? "loop" : "long") : options.researchMode().name(),
+                "contextChars", String.valueOf(options.contextChars()), "inputVersion", version,
+                "output", options.output() == null ? "" : options.output().toAbsolutePath().normalize().toString(),
+                "artifacts", options.artifactsDirectory() == null ? "" : options.artifactsDirectory().toAbsolutePath().normalize().toString());
+        var binding = new CheckpointStore.Binding(options.provider(), options.model(), directory.toRealPath().toString(),
+                options.file(), settings);
+        try (var store = new CheckpointStore(options.checkpointPath(), directory, binding, options.resume() != null)) {
+            trace.accept("checkpoint.input version=" + version);
+            return executeTask(options, directory, modelClient, trace, research, note, context, store, control);
+        }
+    }
+
+    private static Execution executeTask(Options options, Path directory, ModelClient modelClient, Consumer<String> trace,
+                                         SourceResearch research, NoteOutput note, LongTaskContext context,
+                                         CheckpointStore store, AgentControl control) throws IOException {
         var toolList = new ArrayList<Tool>(research == null
                 ? List.of(new ReadTextTool(directory, 16 * 1024)) : research.tools());
         if (context != null) toolList.addAll(context.tools());
+        if (control != AgentControl.NONE) toolList.add(new Tool() {
+            public Definition definition() { return new Definition("ask_user", "Ask a question and wait for the user before continuing", Map.of("question", "A concise question for the user")); }
+            public ToolResult execute(Map<String, String> arguments) {
+                String question = arguments.get("question");
+                if (question == null || question.isBlank() || question.length() > 2000) return ToolResult.failure("ASK_INVALID");
+                control.ask(question);
+                return ToolResult.success("WAITING_FOR_USER: the user's answer will arrive as a follow-up message");
+            }
+        });
         // DEBUG S2-1: inspect options, modelClient and tools before starting the task.
-        var runtime = new AgentRuntime(modelClient, new ToolRegistry(toolList), options.maxTurns(), trace, context);
+        var runtime = new AgentRuntime(modelClient, new ToolRegistry(toolList), options.maxTurns(), trace, context, control);
         String question = research == null ? options.question() : research.prompt(options.question());
-        AgentResult result = runtime.run(context == null ? question : context.prompt(question));
+        if (store != null && options.resume() != null && research != null) {
+            research.restoreEvidence(store.load().messages());
+            trace.accept("source.evidence restored=true");
+        }
+        String prompt = context == null ? question : context.prompt(question);
+        AgentResult result = store == null ? runtime.run(prompt)
+                : runtime.runCheckpointed(prompt, store, options.resume() != null, options.pauseAfter());
+        if (store != null && !store.binding().configuration().get("inputVersion")
+                .equals(inputVersion(options, directory, research))) {
+            return new Execution(result, null, "CHECKPOINT_INPUT_CHANGED: input changed during the run");
+        }
         if (research == null || result.finalAnswer().isEmpty()) return new Execution(result, null, null);
         try {
             String answer = result.finalAnswer().orElseThrow();
@@ -112,7 +159,19 @@ public final class Main {
         }
     }
 
-    private static AgentResult runDelegation(Options options, Path directory, ModelClient parent, Consumer<String> trace)
+    private static String inputVersion(Options options, Path directory, SourceResearch research) throws IOException {
+        if (research != null) return research.fingerprint();
+        var result = new ReadTextTool(directory, 16 * 1024).execute(Map.of("path", options.file()));
+        if (result.error()) throw new IOException("CHECKPOINT_INPUT_UNAVAILABLE: " + result.text());
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(result.text().getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static AgentResult runDelegation(Options options, Path directory, ModelClient parent, Consumer<String> trace, AgentControl control)
             throws IOException {
         ModelClient reader = options.provider().equals("replay")
                 ? new DeepSeekModelClient(options.model(), new ReplayTransport(options.file()), trace, options.wire())
@@ -121,7 +180,7 @@ public final class Main {
         var parentTools = new ToolRegistry(List.of(new DelegateTool(reader, readerTools, trace)));
         var binding = new CheckpointStore.Binding(options.provider(), options.model(), directory.toRealPath().toString(), options.file());
         try (var store = new CheckpointStore(options.checkpointPath(), directory, binding, options.resume() != null)) {
-            var runtime = new AgentRuntime(parent, parentTools, options.maxTurns(), trace);
+            var runtime = new AgentRuntime(parent, parentTools, options.maxTurns(), trace, null, control);
             return runtime.runCheckpointed(options.question(), store, options.resume() != null, options.pauseAfter());
         }
     }
@@ -154,16 +213,17 @@ public final class Main {
                            Path repository, Path notes, Path output, int maxTurns,
                            int contextChars, Path artifactsDirectory,
                            Path checkpoint, Path resume, int pauseAfter,
-                           boolean messages, boolean wire, boolean help) {
+                           boolean messages, boolean wire, boolean help, boolean direct) {
         Path researchDirectory() { return notes == null ? repository : notes; }
         Path checkpointPath() { return resume == null ? checkpoint : resume; }
+        boolean delegation() { return !direct && checkpointPath() != null && researchDirectory() == null && contextChars == 0; }
 
         SourceResearch.Mode researchMode() {
             return notes == null ? SourceResearch.Mode.SOURCE : SourceResearch.Mode.MARKDOWN;
         }
 
         personal.agent.deepseek.ChatTransport replayTransport() {
-            if (checkpointPath() != null) return new DelegationReplayTransport(file);
+            if (delegation()) return new DelegationReplayTransport(file);
             if (contextChars > 0) return new LongTaskReplayTransport(file);
             if (researchDirectory() != null) return new SourceReplayTransport(researchMode());
             return new ReplayTransport(file);
@@ -182,6 +242,7 @@ public final class Main {
             Path resume = null;
             int pauseAfter = 0;
             boolean messages = false, wire = false, help = false;
+            boolean direct = false;
             for (int index = 0; index < args.length; index++) {
                 switch (args[index]) {
                     case "--provider" -> provider = value(args, ++index, "--provider");
@@ -211,6 +272,7 @@ public final class Main {
                     case "--messages" -> messages = true;
                     case "--wire" -> wire = true;
                     case "--help" -> help = true;
+                    case "--direct" -> direct = true;
                     default -> throw new IllegalArgumentException("Unknown option: " + args[index]);
                 }
             }
@@ -226,8 +288,8 @@ public final class Main {
             if (checkpoint != null && resume != null) throw new IllegalArgumentException("choose either --checkpoint or --resume");
             if (pauseAfter > 0 && !delegation) throw new IllegalArgumentException("--pause-after requires a checkpoint");
             if (resume != null && question != null) throw new IllegalArgumentException("--resume uses the saved question");
-            if (delegation && (research || contextChars > 0 || "scripted".equals(provider))) {
-                throw new IllegalArgumentException("checkpoint mode uses a read-only example and replay or deepseek");
+            if (delegation && "scripted".equals(provider)) {
+                throw new IllegalArgumentException("checkpoint mode requires replay or deepseek");
             }
             if (artifactsDirectory != null && contextChars == 0) throw new IllegalArgumentException("--artifacts-dir requires --context-chars");
             if (contextChars > 0 && ("scripted".equals(provider) || (research && "replay".equals(provider)))) {
@@ -236,7 +298,7 @@ public final class Main {
             if (contextChars > 0 && artifactsDirectory == null) artifactsDirectory = Path.of("out/agent-runs");
             if (model.isBlank()) throw new IllegalArgumentException("--model must not be blank");
             if (file == null) file = contextChars == 0 ? "agent-loop.md" : "long-task.md";
-            if (delegation && resume == null) {
+            if (delegation && !direct && !research && contextChars == 0 && resume == null) {
                 String task = question == null ? "总结资料中工具执行和结果回填的过程。" : question;
                 question = "先调用 delegate_task，把读取 " + file + " 的任务交给 reader。收到结构化摘要后再回答。\n\n用户任务：\n" + task;
             } else if (question == null) {
@@ -246,7 +308,7 @@ public final class Main {
             }
             if (maxTurns == 0) maxTurns = contextChars > 0 ? 12 : research ? 8 : 4;
             return new Options(provider, file, model, question, repository, notes, output, maxTurns,
-                    contextChars, artifactsDirectory, checkpoint, resume, pauseAfter, messages, wire, help);
+                    contextChars, artifactsDirectory, checkpoint, resume, pauseAfter, messages, wire, help, direct);
         }
 
         private static String value(String[] args, int index, String name) {

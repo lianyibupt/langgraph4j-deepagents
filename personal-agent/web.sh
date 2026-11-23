@@ -4,8 +4,14 @@ set -euo pipefail
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 
+DEBUG_OPTIONS=()
+if [[ "${1:-}" == '--debug' ]]; then
+  DEBUG_OPTIONS=('-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=127.0.0.1:5005')
+  shift
+fi
+
 if command -v mvn >/dev/null; then
-  exec mvn -q -DskipTests "-Dspring-boot.run.arguments=$*" spring-boot:run
+  exec mvn -q -DskipTests "-Dspring-boot.run.jvmArguments=${DEBUG_OPTIONS[*]-}" "-Dspring-boot.run.arguments=$*" spring-boot:run
 fi
 
 # Offline startup for the local Maven cache. Versions follow the BOM in pom.xml.
@@ -42,4 +48,4 @@ while IFS= read -r -d '' SOURCE; do
   SOURCES+=("$SOURCE")
 done < <(find "$PROJECT_DIR/src/main/java" -name '*.java' -type f -print0)
 "${JAVA_HOME:+$JAVA_HOME/bin/}javac" -encoding UTF-8 --release 21 -parameters -g -Xlint:all -cp "$WEB_CP" -d "$BUILD_DIR" "${SOURCES[@]}"
-"${JAVA_HOME:+$JAVA_HOME/bin/}java" -cp "$BUILD_DIR:$PROJECT_DIR/src/main/resources:$WEB_CP" personal.agent.web.WebApplication "$@"
+"${JAVA_HOME:+$JAVA_HOME/bin/}java" ${DEBUG_OPTIONS[@]+"${DEBUG_OPTIONS[@]}"} -cp "$BUILD_DIR:$PROJECT_DIR/src/main/resources:$WEB_CP" personal.agent.web.WebApplication "$@"

@@ -6,7 +6,7 @@ const providers = byId("provider");
 const question = byId("question");
 const maxTurns = byId("max-turns");
 const providerNames = { replay: "协议回放", scripted: "固定响应", deepseek: "DeepSeek 实时" };
-const statuses = { RUNNING: "运行中", PAUSED: "已暂停", COMPLETED: "已完成", FAILED: "失败", TURN_LIMIT: "已达轮次上限" };
+const statuses = { RUNNING: "运行中", PAUSED: "已暂停", COMPLETED: "已完成", FAILED: "失败", TURN_LIMIT: "已达轮次上限", RECOVERY_REQUIRED: "待核对", WAITING_INPUT: "等待回答", CANCELLED: "已停止", QUEUED: "等待槽位" };
 const eventTypes = {
   "model.request": ["请求模型", "model", "flow"],
   "model.response": ["收到模型响应", "model", "flow"],
@@ -19,6 +19,17 @@ const eventTypes = {
   "plan.status": ["更新任务计划", "tool", "file"],
   "context.prepare": ["准备模型上下文", "model", "flow"],
   "artifact.saved": ["归档工具结果", "tool", "file"],
+  "context.restored": ["恢复计划与产物", "tool", "file"],
+  "checkpoint.input": ["绑定输入版本", "tool", "file"],
+  "source.evidence": ["恢复引用证据", "tool", "file"],
+  "knowledge.search": ["检索近期个人资料", "tool", "file"],
+  "knowledge.selected": ["确认本次上下文来源", "tool", "check"],
+  "knowledge.snapshot": ["固定选中资料版本", "done", "file"],
+  "inbox.received": ["接收补充要求", "tool", "file"],
+  "inbox.applied": ["应用补充要求", "done", "check"],
+  "inbox.question": ["等待你的回答", "tool", "file"],
+  "control.stop": ["请求停止任务", "tool", "file"],
+  "control.pause": ["请求暂停任务", "tool", "file"],
   "parent-checkpoint": ["父 Agent 检查点", "tool", "file"],
   "delegate.start": ["委派给子 Agent", "tool", "arrow"],
   "delegate.finish": ["子 Agent 返回结果", "done", "check"]
@@ -33,6 +44,9 @@ let selectedId = null;
 let renderedId = null;
 let renderedStatus = null;
 let historyPage = false;
+let currentPage = "console";
+let renderedContent = "";
+let renderedOmitted = 0;
 let connected = false;
 let pending = false;
 let selectionVersion = 0;
@@ -65,7 +79,9 @@ async function api(path, body) {
   } catch {
     throw new Error("无法连接本地服务，请确认 Web 服务仍在运行。");
   }
-  const data = await response.json().catch(() => null);
+  const raw = await response.text();
+  let data;
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = null; }
   if (!response.ok || data === null) throw new Error(data?.message || `请求失败（HTTP ${response.status}）`);
   return data;
 }
@@ -85,7 +101,7 @@ function setConnection(ready) {
 function presetFor(id) { return config?.presets.find(preset => preset.id === id); }
 
 function renderConfig() {
-  presets.replaceChildren(...config.presets.map(preset => {
+  presets.replaceChildren(...config.presets.filter(preset => preset.id !== "knowledge").map(preset => {
     const option = element("option", preset.name);
     option.value = preset.id;
     return option;
@@ -101,6 +117,7 @@ function renderModelConfig() {
   providers.querySelector('[value="deepseek"]').disabled = !config.deepSeekConfigured;
   if (providers.selectedOptions[0].disabled) providers.value = "replay";
   updateProvider();
+  if (typeof knowledgeButtons === "function") knowledgeButtons();
 }
 
 function applyPreset() {
@@ -110,8 +127,12 @@ function applyPreset() {
   if (providers.selectedOptions[0].disabled) providers.value = "replay";
   byId("preset-description").textContent = preset.description;
   byId("scope-path").textContent = preset.input;
-  byId("pause-option").hidden = preset.id !== "delegate";
+  byId("pause-option").hidden = preset.id === "loop";
+  byId("pause-label").textContent = ({ source: "读取证据后暂停", notes: "读取证据后暂停", long: "归档资料后暂停", delegate: "委派完成后暂停" })[preset.id] || "保存检查点后暂停";
   byId("pause").checked = false;
+  byId("research-options").hidden = !["source", "notes"].includes(preset.id);
+  byId("input-path").value = "";
+  byId("ask-demo").checked = false;
   question.value = preset.question;
   maxTurns.value = preset.maxTurns;
   updateProvider();
@@ -127,21 +148,26 @@ function updateProvider() {
 }
 
 function updateButtons() {
-  const running = activeDetail?.run.status === "RUNNING" || runs.some(run => run.status === "RUNNING");
+  const running = runs.filter(run => run.status === "RUNNING").length >= (config?.concurrency || 2);
   byId("start").disabled = !connected || !config || running || pending;
   byId("start-label").textContent = pending ? "正在提交…" : running ? "任务运行中…" : "运行任务";
   byId("resume").disabled = !connected || running || pending;
 }
 
 function showPage() {
-  historyPage = location.hash === "#history";
+  currentPage = ["history", "automation", "notifications", "goals", "knowledge"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "console";
+  historyPage = currentPage === "history";
   for (const link of document.querySelectorAll("[data-page]")) {
-    if (link.dataset.page === (historyPage ? "history" : "console")) link.setAttribute("aria-current", "page");
+    if (link.dataset.page === currentPage) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
-  for (const id of ["stats", "workbench", "all-history", "console-heading"]) byId(id).hidden = historyPage;
+  for (const id of ["stats", "workbench", "all-history", "console-heading"]) byId(id).hidden = currentPage !== "console";
   byId("history-heading").hidden = !historyPage;
-  byId("breadcrumb").textContent = historyPage ? "运行历史" : "运行控制台";
+  byId("breadcrumb").textContent = ({ console: "运行控制台", history: "运行历史", automation: "主动服务", notifications: "通知中心", goals: "长期目标", knowledge: "个人知识库" })[currentPage];
+  byId("history-panel").hidden = !["console", "history"].includes(currentPage);
+  byId("active-board").hidden = currentPage !== "console";
+  for (const page of ["automation", "notifications", "goals", "knowledge"]) byId(`${page}-page`).hidden = currentPage !== page;
+  if (currentPage === "knowledge" && typeof loadKnowledge === "function") loadKnowledge();
   byId("history-panel-title").textContent = historyPage ? "全部记录" : "最近运行";
   renderHistory();
 }
@@ -162,11 +188,12 @@ function statusBadge(run, target = element("span", undefined, "status")) {
 
 function renderHistory() {
   byId("history-description").textContent = config
-    ? `查看本次服务启动以来最近 ${config.historyLimit} 条运行记录、结果与执行轨迹。`
-    : "查看本次服务启动以来的运行记录、结果与执行轨迹。";
+    ? `查看本机持久保存的最近 ${config.historyLimit} 条运行记录、结果与执行轨迹。`
+    : "查看本机保存的运行记录、结果与执行轨迹。";
   byId("stat-total").textContent = config ? runs.length : "—";
   byId("stat-complete").textContent = config ? runs.filter(run => run.status === "COMPLETED").length : "—";
   byId("stat-duration").textContent = formatDuration(runs.find(run => run.finishedAt));
+  if (typeof renderActiveRuns === "function") renderActiveRuns();
   const tbody = byId("history-rows");
   const visible = historyPage ? runs : runs.slice(0, 5);
   if (!visible.length) {
@@ -247,9 +274,12 @@ function renderOutput(detail) {
   byId("result-empty").hidden = !resultContent.hidden;
 
   const messages = byId("message-list");
+  const opened = new Set([...messages.querySelectorAll("details[open]")].map(node => node.dataset.index));
   const roles = { USER: "用户任务", ASSISTANT: "模型响应", TOOL: "工具结果" };
   messages.replaceChildren(...(detail?.messages || []).map((message, index) => {
     const card = element("details", undefined, "message");
+    card.dataset.index = String(index);
+    card.open = opened.has(String(index));
     const count = message.toolCalls.length ? ` · ${message.toolCalls.length} 个工具调用` : "";
     const tool = message.toolCallId ? ` · ${message.toolCallId}${message.toolError ? " · 执行失败" : ""}` : "";
     const summary = element("summary");
@@ -285,18 +315,46 @@ function renderDetail(detail) {
   byId("trace-count").textContent = run?.events || 0;
   const events = detail?.events || [];
   const list = byId("trace-list");
-  if (changedRun) {
+  if (changedRun || renderedOmitted !== (detail?.omittedEvents || 0)) {
     list.replaceChildren();
     byId("trace").scrollTop = 0;
   }
+  renderedOmitted = detail?.omittedEvents || 0;
   list.append(...events.slice(list.children.length).map(eventRow));
   list.hidden = !events.length;
   byId("trace-empty").hidden = Boolean(events.length);
   byId("trace-empty").querySelector("h3").textContent = run?.status === "RUNNING" ? "正在等待首个事件" : run ? "本次运行没有轨迹事件" : "等待任务开始";
   byId("trace-omitted").hidden = !detail?.omittedEvents;
   byId("trace-omitted").textContent = `另有 ${detail?.omittedEvents || 0} 条事件已省略。`;
-  if (changedRun || changedStatus) renderOutput(detail);
+  const signature = `${run?.id}:${run?.status}:${run?.phase}:${detail?.messages?.length}:${detail?.inbox?.length}:${detail?.inbox?.filter(item => item.appliedAt).length}`;
+  if (changedRun || changedStatus || signature !== renderedContent) {
+    renderOutput(detail);
+    if (typeof renderInteraction === "function") renderInteraction(detail);
+    renderedContent = signature;
+    loadRecovery(detail);
+  }
   updateButtons();
+}
+
+async function loadRecovery(detail) {
+  byId("checkpoint-phase").textContent = "—";
+  byId("input-version").textContent = "—";
+  byId("saved-plan").replaceChildren();
+  byId("recovery-description").textContent = "选择任务后查看保存的恢复状态。";
+  if (!detail) return;
+  const id = detail.run.id;
+  try {
+    const recovery = await api(`runs/${id}/recovery`);
+    if (activeDetail?.run.id !== id || activeDetail.run.status !== detail.run.status) return;
+    if (detail.run.status === "FAILED" && ["READY", "COMPLETED"].includes(recovery.phase)) byId("resume").hidden = false;
+    byId("checkpoint-phase").textContent = recovery.phase;
+    byId("input-version").textContent = recovery.inputVersion || "本课未绑定输入版本";
+    byId("recovery-description").textContent = recovery.detail;
+    const names = { pending: "待执行", in_progress: "进行中", done: "已完成" };
+    byId("saved-plan").replaceChildren(...recovery.plan.map(step => element("li", `${names[step.status] || step.status} · ${step.task}`)));
+  } catch (error) {
+    if (activeDetail?.run.id === id) byId("recovery-description").textContent = error.message;
+  }
 }
 
 function remember(detail) {
@@ -314,7 +372,7 @@ async function selectRun(id) {
     const detail = await api(`runs/${id}`);
     if (version !== selectionVersion) return;
     selectedId = id;
-    if (historyPage) {
+    if (currentPage !== "console") {
       location.hash = "console";
       showPage();
     }
@@ -335,7 +393,9 @@ async function submitRun(resume) {
   updateButtons();
   try {
     const path = resume ? `runs/${selectedId}/resume` : "runs";
-    const body = resume ? {} : { preset: presets.value, provider: providers.value, question: question.value,
+    const body = resume ? {} : { preset: presets.value, provider: providers.value,
+      inputPath: byId("research-options").hidden ? null : byId("input-path").value || null,
+      question: (byId("ask-demo").checked && !byId("research-options").hidden ? "[教学：先询问] 请先使用 ask_user 确认研究方向，收到回答后继续。\n" : "") + question.value,
       maxTurns: maxTurns.valueAsNumber, pause: !byId("pause-option").hidden && byId("pause").checked };
     const detail = await api(path, body);
     remember(detail);
@@ -348,7 +408,7 @@ async function submitRun(resume) {
   } finally {
     pending = false;
     updateButtons();
-    if (!refreshing && runs.some(run => run.status === "RUNNING")) scheduleRefresh(80);
+    if (!refreshing && runs.some(run => ["RUNNING", "QUEUED"].includes(run.status))) scheduleRefresh(80);
   }
 }
 
@@ -368,13 +428,14 @@ async function refresh() {
       else renderModelConfig();
     }
     const current = await api("runs");
+    if (typeof renderManagement === "function") renderManagement(await api("management"));
     if (version !== selectionVersion || pending) return;
     setConnection(true);
     runs = current;
     renderHistory();
-    if (!selectedId) selectedId = runs.find(run => run.status === "RUNNING")?.id || null;
+    if (!selectedId) selectedId = runs.find(run => run.status === "RUNNING")?.id || runs[0]?.id || null;
     const selected = runs.find(run => run.id === selectedId);
-    if (selected && (selected.status === "RUNNING" || activeDetail?.run.status !== selected.status)) {
+    if (selected && (["RUNNING", "QUEUED"].includes(selected.status) || activeDetail?.run.status !== selected.status)) {
       const detail = await api(`runs/${selectedId}`);
       if (version === selectionVersion && !pending) { remember(detail); renderDetail(detail); }
     } else if (selectedId && !selected) {
@@ -387,7 +448,7 @@ async function refresh() {
     renderHistory();
   } finally {
     refreshing = false;
-    scheduleRefresh(runs.some(run => run.status === "RUNNING") ? 350 : 2000);
+    scheduleRefresh(runs.some(run => ["RUNNING", "QUEUED"].includes(run.status)) ? 350 : 2000);
   }
 }
 

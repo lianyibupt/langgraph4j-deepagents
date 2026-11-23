@@ -19,6 +19,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /** One process owns a checkpoint for the entire run. The lock file has a stable name. */
@@ -36,7 +37,15 @@ public final class CheckpointStore implements AutoCloseable {
     private final FileLock lock;
 
     public enum Phase { READY, TOOLS_PENDING, COMPLETED }
-    public record Binding(String provider, String model, String workspace, String sampleFile) {}
+    public record Binding(String provider, String model, String workspace, String sampleFile,
+                          Map<String, String> configuration) {
+        public Binding(String provider, String model, String workspace, String sampleFile) {
+            this(provider, model, workspace, sampleFile, null);
+        }
+        public Binding {
+            if (configuration != null) configuration = Map.copyOf(configuration);
+        }
+    }
     public record State(int version, Binding binding, Phase phase, int modelTurns, List<Message> messages) {
         public State {
             if (messages != null) messages = List.copyOf(messages);
@@ -80,6 +89,7 @@ public final class CheckpointStore implements AutoCloseable {
     }
 
     public Path path() { return file; }
+    public Binding binding() { return binding; }
 
     public void start(String question) throws IOException {
         if (!Files.notExists(file, LinkOption.NOFOLLOW_LINKS)) throw new IOException("CHECKPOINT_EXISTS");
@@ -102,7 +112,14 @@ public final class CheckpointStore implements AutoCloseable {
         try { state = json.readValue(data, State.class); }
         catch (JsonProcessingException e) { throw new IOException("CHECKPOINT_INVALID: malformed state", e); }
         if (state == null || state.version() != VERSION || state.phase() == null) throw new IOException("CHECKPOINT_INVALID: unsupported state");
-        if (!binding.equals(state.binding())) throw new IOException("CHECKPOINT_BINDING_MISMATCH");
+        if (!binding.equals(state.binding())) {
+            if (binding.configuration() != null && state.binding() != null && state.binding().configuration() != null
+                    && !java.util.Objects.equals(binding.configuration().get("inputVersion"),
+                    state.binding().configuration().get("inputVersion"))) {
+                throw new IOException("CHECKPOINT_INPUT_CHANGED: start a new run for the changed input");
+            }
+            throw new IOException("CHECKPOINT_BINDING_MISMATCH");
+        }
         // DEBUG S6-3: examine the durable phase before allowing any model or tool calls.
         if (state.phase() == Phase.TOOLS_PENDING) {
             throw new IOException("CHECKPOINT_TOOLS_UNCERTAIN: inspect the pending batch before continuing");
@@ -122,13 +139,19 @@ public final class CheckpointStore implements AutoCloseable {
         var ids = new HashSet<String>();
         for (int i = 1; i < history.size(); ) {
             Message assistant = history.get(i++);
+            if (assistant != null && assistant.role() == Message.Role.USER) {
+                if (assistant.text().isBlank()) throw new IOException("CHECKPOINT_INVALID: empty follow-up");
+                continue;
+            }
             if (assistant == null || assistant.role() != Message.Role.ASSISTANT) {
                 throw new IOException("CHECKPOINT_INVALID: expected assistant message");
             }
             turns++;
             if (assistant.toolCalls().isEmpty()) {
-                if (i != history.size() || assistant.text().isBlank()) throw new IOException("CHECKPOINT_INVALID: malformed final answer");
-                finalAnswer = true;
+                if (assistant.text().isBlank() || (i != history.size() && history.get(i).role() != Message.Role.USER)) {
+                    throw new IOException("CHECKPOINT_INVALID: malformed final answer");
+                }
+                finalAnswer = i == history.size();
             }
             for (var call : assistant.toolCalls()) {
                 if (i >= history.size() || !ids.add(call.id())) throw new IOException("CHECKPOINT_INVALID: incomplete or duplicate tool batch");

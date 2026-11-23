@@ -16,6 +16,7 @@ public final class AgentRuntime {
     private final int maxModelTurns;
     private final Consumer<String> trace;
     private final LongTaskContext context;
+    private final AgentControl control;
 
     public AgentRuntime(ModelClient model, ToolRegistry tools, int maxModelTurns, Consumer<String> trace) {
         this(model, tools, maxModelTurns, trace, null);
@@ -23,12 +24,18 @@ public final class AgentRuntime {
 
     public AgentRuntime(ModelClient model, ToolRegistry tools, int maxModelTurns, Consumer<String> trace,
                         LongTaskContext context) {
+        this(model, tools, maxModelTurns, trace, context, AgentControl.NONE);
+    }
+
+    public AgentRuntime(ModelClient model, ToolRegistry tools, int maxModelTurns, Consumer<String> trace,
+                        LongTaskContext context, AgentControl control) {
         this.model = Objects.requireNonNull(model);
         this.tools = Objects.requireNonNull(tools);
         if (maxModelTurns < 1) throw new IllegalArgumentException("maxModelTurns must be positive");
         this.maxModelTurns = maxModelTurns;
         this.trace = Objects.requireNonNull(trace);
         this.context = context;
+        this.control = Objects.requireNonNull(control);
     }
 
     public AgentResult run(String question) {
@@ -45,12 +52,21 @@ public final class AgentRuntime {
 
     public AgentResult runCheckpointed(String question, CheckpointStore store, boolean resume, int pauseAfter)
             throws IOException {
-        if (context != null) throw new IllegalArgumentException("CHECKPOINT_CONTEXT_UNSUPPORTED");
+        if (context == null) return continueCheckpoint(question, store, resume, pauseAfter);
+        synchronized (context) {
+            return continueCheckpoint(question, store, resume, pauseAfter);
+        }
+    }
+
+    private AgentResult continueCheckpoint(String question, CheckpointStore store, boolean resume, int pauseAfter)
+            throws IOException {
+        if (context != null && !resume) context.reset();
         if (!resume) {
             if (question == null || question.isBlank()) throw new IllegalArgumentException("Question must not be blank");
             store.start(question);
         }
         var state = store.load();
+        if (context != null && resume) context.restore(state.messages());
         trace.accept("parent-checkpoint " + (resume ? "loaded" : "created") + " phase=" + state.phase()
                 + " modelTurns=" + state.modelTurns() + " path=" + store.path());
         if (state.phase() == CheckpointStore.Phase.COMPLETED) {
@@ -69,6 +85,8 @@ public final class AgentRuntime {
         for (Message message : initial) for (ToolCall call : message.toolCalls()) seenCallIds.add(call.id());
 
         for (int turn = completedTurns + 1; turn <= maxModelTurns; turn++) {
+            if (control.stopped()) return stop(AgentResult.Status.CANCELLED, turn - 1, messages, "Stopped by user");
+            applyInputs(messages, store, turn - 1);
             if (Thread.currentThread().isInterrupted()) {
                 return stop(AgentResult.Status.FAILED, turn - 1, messages, "INTERRUPTED");
             }
@@ -81,6 +99,7 @@ public final class AgentRuntime {
                 return stop(AgentResult.Status.FAILED, turn - 1, messages, "CONTEXT_ARTIFACT_FAILED: " + e.getMessage());
             }
             trace.accept("model.request turn=" + turn + " messages=" + modelMessages.size());
+            control.observe(new AgentControl.Snapshot("MODEL_REQUEST", turn, messages, modelMessages, null));
             final ModelReply reply;
             try {
                 // Breakpoint 1: inspect exactly what this model request receives.
@@ -94,9 +113,14 @@ public final class AgentRuntime {
             }
 
             // Breakpoint 2: a model response is a decision, not tool execution.
+            if (control.stopped()) return stop(AgentResult.Status.CANCELLED, turn, messages, "Stopped after the active model request");
             if (reply instanceof ModelReply.FinalAnswer answer) {
                 trace.accept("model.response type=final_answer");
                 messages.add(Message.answer(answer.text()));
+                if (!control.finishAllowed(messages)) {
+                    applyInputs(messages, store, turn);
+                    continue;
+                }
                 save(store, CheckpointStore.Phase.COMPLETED, turn, messages);
                 return stop(AgentResult.Status.COMPLETED, turn, messages, "Final response received");
             }
@@ -118,8 +142,9 @@ public final class AgentRuntime {
             save(store, CheckpointStore.Phase.TOOLS_PENDING, turn, messages);
             for (ToolCall call : batch.calls()) {
                 trace.accept("tool.start id=" + call.id() + " name=" + call.name());
+                control.observe(new AgentControl.Snapshot("TOOL_RUNNING", turn, messages, null, call));
                 // Breakpoint 3: only the runtime, through the registry, executes tools.
-                ToolResult result = tools.execute(call);
+                ToolResult result = control.stopped() ? ToolResult.failure("CANCELLED: tool skipped after stop request") : tools.execute(call);
                 messages.add(Message.tool(call, result));
                 // Breakpoint 4: the result is now in the next model input.
                 trace.accept("tool.result id=" + call.id() + " error=" + result.error()
@@ -134,14 +159,28 @@ public final class AgentRuntime {
                         return stop(AgentResult.Status.FAILED, turn, messages, "CONTEXT_ARTIFACT_FAILED: " + e.getMessage());
                     }
                 }
+                control.observe(new AgentControl.Snapshot("TOOL_COMPLETED", turn, messages, null, null));
             }
             save(store, CheckpointStore.Phase.READY, turn, messages);
-            if (store != null && pauseAfter > 0 && turn >= pauseAfter) {
+            if (control.stopped()) return stop(AgentResult.Status.CANCELLED, turn, messages, "Stopped after the complete tool batch");
+            if (control.waiting()) return stop(AgentResult.Status.WAITING_INPUT, turn, messages, "Waiting for a user answer");
+            if (control.paused() || (store != null && pauseAfter > 0 && turn >= pauseAfter)) {
                 return stop(AgentResult.Status.PAUSED, turn, messages, "Paused after a complete tool batch. Resume with --resume " + store.path());
             }
         }
         return stop(AgentResult.Status.TURN_LIMIT, Math.max(completedTurns, maxModelTurns), messages,
                 "Maximum model turns reached: " + maxModelTurns);
+    }
+
+    private void applyInputs(ArrayList<Message> messages, CheckpointStore store, int turn) {
+        var inputs = control.pending(messages);
+        if (inputs.isEmpty()) return;
+        for (var input : inputs) messages.add(Message.user(input.message()));
+        // DEBUG S9-1: save the input in history before acknowledging its application.
+        save(store, CheckpointStore.Phase.READY, turn, messages);
+        control.applied(inputs);
+        trace.accept("inbox.applied count=" + inputs.size());
+        control.observe(new AgentControl.Snapshot("INPUT_APPLIED", turn, messages, null, null));
     }
 
     private void save(CheckpointStore store, CheckpointStore.Phase phase, int turn, List<Message> messages) {
@@ -156,6 +195,7 @@ public final class AgentRuntime {
 
     private AgentResult stop(AgentResult.Status status, int turns, List<Message> messages, String detail) {
         trace.accept("run.stop status=" + status + " modelTurns=" + turns);
+        control.observe(new AgentControl.Snapshot(status.name(), turns, messages, null, null));
         return new AgentResult(status, turns, messages, detail);
     }
 }

@@ -6,6 +6,8 @@
   <title>Agent 工作台</title>
   <link rel="stylesheet" href="/console.css">
   <script src="/console.js" defer></script>
+  <script src="/management.js" defer></script>
+  <script src="/knowledge.js" defer></script>
 </head>
 <body>
   <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -34,6 +36,10 @@
         <span class="nav-label">工作区</span>
         <a class="nav-item" href="#console" data-page="console" aria-current="page"><svg class="icon"><use href="#icon-grid"></use></svg>运行控制台</a>
         <a class="nav-item" href="#history" data-page="history"><svg class="icon"><use href="#icon-clock"></use></svg>运行历史</a>
+        <a class="nav-item" href="#knowledge" data-page="knowledge"><svg class="icon"><use href="#icon-file"></use></svg>个人知识库</a>
+        <a class="nav-item" href="#automation" data-page="automation"><svg class="icon"><use href="#icon-flow"></use></svg>主动服务</a>
+        <a class="nav-item" href="#notifications" data-page="notifications"><svg class="icon"><use href="#icon-file"></use></svg>通知中心 <span id="unread-count" class="count">0</span></a>
+        <a class="nav-item" href="#goals" data-page="goals"><svg class="icon"><use href="#icon-mark"></use></svg>长期目标</a>
         <button class="nav-item" id="open-config" type="button"><svg class="icon"><use href="#icon-settings"></use></svg>模型配置</button>
       </nav>
       <div class="sidebar-foot">
@@ -58,6 +64,8 @@
         </header>
 
         <div class="notice" id="notice" role="alert" hidden></div>
+        <div class="notice" id="management-health" role="alert" hidden></div>
+        <section class="active-board" id="active-board" aria-label="正在推进的任务"></section>
 
         <div class="stats" id="stats" aria-label="运行统计">
           <div class="stat"><span class="stat-icon tone-orange"><svg class="icon"><use href="#icon-flow"></use></svg></span><div><span>当前运行记录</span><strong id="stat-total">—</strong></div></div>
@@ -84,7 +92,8 @@
                 <summary>高级参数</summary>
                 <div class="advanced-fields">
                   <label for="max-turns">模型轮次上限</label><input id="max-turns" type="number" name="maxTurns" min="1" max="20" required disabled>
-                  <label class="checkbox" id="pause-option" hidden><input id="pause" type="checkbox">委派完成后暂停</label>
+                  <label class="checkbox" id="pause-option" hidden><input id="pause" type="checkbox"><span id="pause-label">保存检查点后暂停</span></label>
+                  <div id="research-options" hidden><label class="field-label" for="input-path">研究目录（留空使用示例）</label><input id="input-path" type="text" placeholder="本机资料目录的完整路径"><label class="checkbox"><input id="ask-demo" type="checkbox">先询问研究方向，再等待我的回答</label></div>
                 </div>
               </details>
               <button class="button primary run-button" type="submit" id="start" disabled><svg class="icon"><use href="#icon-play"></use></svg><span id="start-label">运行任务</span><svg class="icon end-icon"><use href="#icon-arrow"></use></svg></button>
@@ -94,13 +103,17 @@
           <section class="panel viewer" id="viewer" aria-labelledby="viewer-heading">
             <header class="panel-header viewer-header">
               <div><h2 id="viewer-heading">执行详情</h2><p id="viewer-subtitle">选择一条运行记录，或提交一个新任务。</p></div>
-              <div class="viewer-actions"><span class="status" id="run-status" aria-live="polite"><span class="dot"></span>待运行</span><button class="button small" type="button" id="resume" hidden>继续运行</button></div>
+              <div class="viewer-actions"><span class="status" id="run-status" aria-live="polite"><span class="dot"></span>待运行</span><button class="button small" type="button" id="pause-run" hidden>暂停</button><button class="button small" type="button" id="stop-run" hidden>停止</button><button class="button small" type="button" id="resume" hidden>继续运行</button></div>
             </header>
             <div class="run-metrics" id="run-metrics" hidden><span>模型轮次 <b id="detail-turns">0</b></span><span>工具调用 <b id="detail-tools">0</b></span><span>运行 ID <code id="detail-id"></code></span></div>
+            <div class="execution-state" id="execution-state" hidden><strong id="live-phase"></strong><p id="live-scope"></p><p id="live-delivery"></p><div class="execution-steps" id="execution-steps"></div></div>
             <div class="tabs" role="tablist" aria-label="运行详情视图">
               <button type="button" id="tab-trace" role="tab" aria-controls="trace" aria-selected="true" data-tab="trace">执行轨迹 <span id="trace-count" class="count" hidden></span></button>
               <button type="button" id="tab-result" role="tab" aria-controls="result" aria-selected="false" tabindex="-1" data-tab="result">最终结果</button>
               <button type="button" id="tab-messages" role="tab" aria-controls="messages" aria-selected="false" tabindex="-1" data-tab="messages">消息记录</button>
+              <button type="button" id="tab-recovery" role="tab" aria-controls="recovery" aria-selected="false" tabindex="-1" data-tab="recovery">恢复状态</button>
+              <button type="button" id="tab-input" role="tab" aria-controls="model-input" aria-selected="false" tabindex="-1" data-tab="model-input">模型输入</button>
+              <button type="button" id="tab-inbox" role="tab" aria-controls="inbox" aria-selected="false" tabindex="-1" data-tab="inbox">协作输入</button>
             </div>
             <div class="viewer-body" id="trace" role="tabpanel" aria-labelledby="tab-trace" tabindex="0">
               <div class="empty-state trace-empty" id="trace-empty">
@@ -112,6 +125,11 @@
             </div>
             <div class="viewer-body" id="result" role="tabpanel" aria-labelledby="tab-result" tabindex="0" hidden><div class="empty-state" id="result-empty"><div class="empty-icon"><svg class="icon"><use href="#icon-file"></use></svg></div><h3>暂无最终结果</h3></div><div class="result-content" id="result-content" hidden></div></div>
             <div class="viewer-body" id="messages" role="tabpanel" aria-labelledby="tab-messages" tabindex="0" hidden><div class="empty-state" id="messages-empty"><div class="empty-icon"><svg class="icon"><use href="#icon-terminal"></use></svg></div><h3>暂无消息记录</h3></div><div class="message-list" id="message-list" hidden></div></div>
+            <div class="viewer-body" id="recovery" role="tabpanel" aria-labelledby="tab-recovery" tabindex="0" hidden>
+              <div class="result-content"><p id="recovery-description">选择任务后查看保存的恢复状态。</p><p>检查点阶段 <code id="checkpoint-phase">—</code></p><p>输入版本 <code id="input-version">—</code></p><h3>已保存计划</h3><ul id="saved-plan"></ul><p>暂停记录会保存到本机，服务重启后可从运行历史继续。</p></div>
+            </div>
+            <div class="viewer-body" id="model-input" role="tabpanel" aria-labelledby="tab-input" tabindex="0" hidden><p class="section-hint">这里展示最近一轮真正发送给模型的消息，可与完整历史比较。</p><pre class="context-note" id="memory-context" hidden></pre><div class="message-list" id="model-input-list"></div></div>
+            <div class="viewer-body" id="inbox" role="tabpanel" aria-labelledby="tab-inbox" tabindex="0" hidden><p class="question-banner" id="waiting-question" hidden></p><ol class="input-list" id="inbox-list"></ol><form id="inbox-form" class="inbox-form"><label for="followup">追加要求或回答 Agent</label><textarea id="followup" maxlength="4000" rows="3" placeholder="例如，只分析上下文管理，保留实际源码引用。" required></textarea><button type="submit" class="button" id="send-input">发送补充要求</button><small>要求会在下一次模型请求前应用，执行中的工具在安全边界收尾。</small></form></div>
           </section>
         </div>
 
@@ -119,6 +137,47 @@
           <header class="panel-header history-header"><div><h2 id="history-panel-title">最近运行</h2><p id="history-summary">点击记录查看结果和轨迹。</p></div><a class="text-button" id="all-history" href="#history">查看全部 <svg class="icon"><use href="#icon-arrow"></use></svg></a></header>
           <div class="table-scroll">
             <table><thead><tr><th>任务</th><th>模型模式</th><th>状态</th><th>开始时间</th><th>耗时</th><th><span class="sr-only">操作</span></th></tr></thead><tbody id="history-rows"><tr><td colspan="6" class="history-empty">加载运行记录…</td></tr></tbody></table>
+          </div>
+        </section>
+        <section id="automation-page" class="management-page" hidden>
+          <header class="page-heading"><h1>主动服务</h1><p>检测资料变化，保存证据快照，按规则派发研究。可以追踪每一次判断及对应任务。</p></header>
+          <div class="management-grid"><section class="panel"><header class="panel-header"><h2>新增持续关注</h2></header><form id="watch-form" class="run-form management-form">
+            <label for="watch-title">关注名称</label><input id="watch-title" name="title" maxlength="100" required placeholder="Agent 学习资料更新">
+            <label for="watch-preset">资料类型</label><select id="watch-preset" name="preset"><option value="notes">Markdown 知识资料</option><option value="source">源码目录</option></select>
+            <label for="watch-path">关注目录</label><input id="watch-path" name="inputPath" required placeholder="本机目录的完整路径">
+            <label for="watch-goal">变化后研究什么</label><textarea id="watch-goal" name="goal" maxlength="3000" rows="3" required>整理新增观点、变化及待验证问题，并保留资料引用。</textarea>
+            <label for="watch-keywords">关注关键词</label><input id="watch-keywords" name="keywords" maxlength="500" placeholder="Agent,上下文（留空关注所有变化）">
+            <div class="form-columns"><div><label for="watch-provider">模型模式</label><select id="watch-provider" name="provider"><option value="replay">协议回放</option><option value="deepseek">DeepSeek 实时</option></select></div><div><label for="watch-mode">接单规则</label><select id="watch-mode" name="mode"><option value="observe">观察，逐次批准</option><option value="auto">自动进行只读研究</option></select></div></div>
+            <div class="form-columns"><div><label for="watch-interval">检测间隔（秒）</label><input id="watch-interval" name="intervalSeconds" type="number" min="3" max="86400" value="30" required></div><div><label for="watch-budget">每日研究上限</label><input id="watch-budget" name="dailyLimit" type="number" min="1" max="20" value="5" required></div></div>
+            <button class="button primary" type="submit">建立持续关注</button><small>首次建立资料基线。后续变化才会产生事件，服务运行时持续检测。</small>
+          </form></section><section><div class="card-toolbar"><h2 class="section-title">关注项</h2><select id="watch-filter" aria-label="关注列表范围"><option value="live">启用与暂停</option><option value="all">全部关注项</option><option value="stopped">已停止</option></select></div><div id="watch-list" class="card-list"></div></section></div>
+          <section class="panel management-section"><header class="panel-header"><h2>事件与接单判断</h2></header><div id="trigger-list" class="card-list padded"></div></section>
+        </section>
+        <section id="notifications-page" class="management-page" hidden><header class="page-heading"><h1>通知中心</h1><p>研究结果和待回答问题通过站内通知交付，投递状态与执行状态分别保留。</p></header><div class="delivery-bar"><strong id="delivery-state"></strong><button class="button small" id="toggle-delivery" type="button">暂停投递</button></div><div id="notice-list" class="card-list"></div></section>
+        <section id="goals-page" class="management-page" hidden><header class="page-heading"><h1>长期目标与偏好</h1><p>显式保存目标，按目录和关键词召回到研究上下文。持续关注建议保留匹配依据。</p></header><div class="management-grid"><section class="panel"><header class="panel-header"><h2>保存长期目标</h2></header><form id="goal-form" class="run-form management-form">
+          <label for="goal-title">目标名称</label><input id="goal-title" name="title" maxlength="100" required placeholder="吃透 Java Agent 的执行机制">
+          <label for="goal-content">目标与偏好</label><textarea id="goal-content" name="content" maxlength="2000" rows="4" required placeholder="解释时结合 Java 调用链，优先展示可断点观察的状态，并保留来源。"></textarea>
+          <label for="goal-keywords">召回关键词</label><input id="goal-keywords" name="keywords" maxlength="500" required placeholder="Agent,上下文,工具">
+          <label for="goal-preset">生效资料类型</label><select id="goal-preset" name="preset"><option value="notes">Markdown 知识资料</option><option value="source">源码目录</option></select>
+          <label for="goal-path">生效目录</label><input id="goal-path" name="inputPath" required placeholder="本机目录的完整路径">
+          <label for="goal-provider">后续关注使用的模型</label><select id="goal-provider" name="provider"><option value="replay">协议回放</option><option value="deepseek">DeepSeek 实时</option></select>
+          <label for="goal-mode">持续关注建议</label><select id="goal-mode" name="mode"><option value="observe">展示建议，由我启用</option><option value="auto">允许在此目录自动启用只读关注</option></select>
+          <button class="button primary" type="submit">保存目标</button>
+        </form></section><section><div class="card-toolbar"><h2 class="section-title">已保存目标</h2><select id="goal-filter" aria-label="目标列表范围"><option value="enabled">已启用</option><option value="all">全部目标与建议</option></select></div><div id="goal-list" class="card-list"></div><h2 class="section-title">持续服务建议</h2><div id="suggestion-list" class="card-list"></div></section></div></section>
+        <section id="knowledge-page" class="management-page" hidden aria-labelledby="knowledge-heading">
+          <header class="page-heading"><h1 id="knowledge-heading">个人知识库</h1><p>先在本机检索最近一年的资料，选择来源后，再让 Agent 整理你的 AI 协作产物。</p></header>
+          <section class="panel knowledge-overview"><header class="panel-header"><div><h2>最近一年 · 本地资料</h2><p id="knowledge-policy">正在读取知识库配置。</p></div><button id="knowledge-refresh" class="button small" type="button">刷新资料索引</button></header><div class="padded"><code id="knowledge-root" class="path-text"></code><div id="knowledge-stats" class="knowledge-facts"></div><p id="knowledge-date-note" class="field-help"></p></div></section>
+          <div class="knowledge-layout">
+            <section class="knowledge-results"><form id="knowledge-search-form" class="panel run-form">
+              <label for="knowledge-query">从近期笔记中寻找什么</label><input id="knowledge-query" maxlength="300" required value="AI Agent 协作" placeholder="例如 Agent 架构思考、AI 协作产物">
+              <label for="knowledge-folder">资料范围</label><select id="knowledge-folder"><option value="">最近一年全部可检索目录</option></select>
+              <div class="card-actions knowledge-topics"><button type="button" class="button small" data-knowledge-query="AI Agent 协作">AI 协作产物</button><button type="button" class="button small" data-knowledge-query="Agent 架构 思考">Agent 架构思考</button><button type="button" class="button small" data-knowledge-query="会议 待办 行动">会议与行动项</button><button type="submit" class="button primary" id="knowledge-search-button">本地检索</button></div>
+              <small>搜索和预览不会调用模型。匹配基于中英文词项、标题和路径，未命中时不会启动研究。</small>
+            </form><p id="knowledge-result-status" class="field-help" role="status">输入主题，检索可引用的近期资料。</p><div id="knowledge-results" class="card-list"></div></section>
+            <section class="panel knowledge-compose"><header class="panel-header"><div><h2>本次 Agent 上下文</h2><p>只允许读取你明确选中的资料。</p></div></header><div class="run-form"><strong id="knowledge-selection-summary">尚未选择资料</strong><ul id="knowledge-selection-list" class="knowledge-selection"></ul><p class="field-help">每次最多 6 篇、全文合计 2 MiB。启动 DeepSeek 后，选中文件的全文可由本次 Agent 按需读取；其余文件不在工具范围。</p>
+              <label for="knowledge-question">希望 Agent 怎样整理</label><textarea id="knowledge-question" rows="9" maxlength="4000" required>请根据本次选中的最近一年资料，整理我的 AI 协作产物。按主题说明已有产出、关键认识及其变化、可复用的方法、尚未解决的问题和下一步建议。将原文事实、你的推断和建议分开，给出资料路径及行号。只总结本次选中的资料，不声称覆盖全年全部产物。</textarea>
+              <button id="knowledge-run-replay" class="button" type="button" disabled>用回放观察执行过程</button><button id="knowledge-run-deepseek" class="button primary" type="button" disabled>将选中资料交给 DeepSeek 整理</button><small>回放用于学习工具与引用流程。DeepSeek 才会根据问题分析资料。研究结果另行保存，原始笔记保持只读。</small>
+            </div></section>
           </div>
         </section>
       </main>
@@ -132,5 +191,6 @@
       <p>在 <code>personal-agent/.env</code> 中设置 <code>DEEPSEEK_API_KEY</code>，然后重启本地服务。协议回放和固定响应可以直接运行。</p>
     </div>
   </dialog>
+  <dialog id="knowledge-preview-dialog" aria-labelledby="knowledge-preview-title"><header class="dialog-header"><h2 id="knowledge-preview-title">原文预览</h2><form method="dialog"><button class="icon-button" aria-label="关闭原文预览"><svg class="icon"><use href="#icon-x"></use></svg></button></form></header><div class="dialog-content"><p id="knowledge-preview-path" class="path-text"></p><p id="knowledge-preview-date" class="field-help"></p><pre id="knowledge-preview-content" class="knowledge-original"></pre></div></dialog>
 </body>
 </html>

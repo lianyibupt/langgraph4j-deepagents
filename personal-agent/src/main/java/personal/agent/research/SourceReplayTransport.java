@@ -18,10 +18,26 @@ public final class SourceReplayTransport implements ChatTransport {
 
     @Override
     public Response post(String requestJson) throws Exception {
-        JsonNode messages = json.readTree(requestJson).path("messages");
-        JsonNode last = messages.get(messages.size() - 1);
-        if ("user".equals(last.path("role").asText())) return call(mode.listTool, Map.of("filter", ""));
-        String previous = messages.get(messages.size() - 2).path("tool_calls").path(0).path("function").path("name").asText();
+        JsonNode request = json.readTree(requestJson);
+        JsonNode messages = request.path("messages");
+        boolean interactive = false;
+        for (var tool : request.path("tools")) {
+            if (tool.path("function").path("name").asText().equals("ask_user")) interactive = true;
+        }
+        boolean asked = messages.toString().contains("source-ask_user");
+        boolean askFirst = false;
+        for (var message : messages) {
+            if (message.path("role").asText().equals("user") && message.path("content").asText().contains("[教学：先询问]")) askFirst = true;
+        }
+        if (interactive && askFirst && !asked) {
+            return call("ask_user", Map.of("question", "这次笔记应优先整理哪些方面？请在补充要求中回答。"));
+        }
+        int toolIndex = messages.size() - 1;
+        while (toolIndex >= 0 && !messages.get(toolIndex).path("role").asText().equals("tool")) toolIndex--;
+        if (toolIndex < 0) return call(mode.listTool, Map.of("filter", ""));
+        JsonNode last = messages.get(toolIndex);
+        String previous = messages.get(toolIndex - 1).path("tool_calls").path(0).path("function").path("name").asText();
+        if (previous.equals("ask_user")) return call(mode.listTool, Map.of("filter", ""));
         String content = last.path("content").asText();
         if (!content.startsWith("{")) return finish("[replay] 工具未返回证据，无法生成带引用的报告。");
         JsonNode result = json.readTree(content);
@@ -34,8 +50,11 @@ public final class SourceReplayTransport implements ChatTransport {
             String path = hit.path("path").asText();
             int line = hit.path("line").asInt(1);
             if (path.isEmpty()) {
-                path = json.readTree(messages.get(messages.size() - 3).path("content").asText())
-                        .path("paths").path(0).asText();
+                for (var message : messages) {
+                    if (!message.path("role").asText().equals("tool") || !message.path("content").asText().startsWith("{")) continue;
+                    var listing = json.readTree(message.path("content").asText()).path("paths");
+                    if (!listing.isMissingNode() && !listing.isEmpty()) { path = listing.path(0).asText(); break; }
+                }
             }
             return call(mode.readTool, Map.of("path", path, "start_line", String.valueOf(line),
                     "end_line", String.valueOf(line + 4)));
